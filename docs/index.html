@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hemilier 桌面智能体</title>
+    <meta
+      name="description"
+      content="Hemilier 桌面智能体：对话 + 工具调用 + 文件/命令操作 + 联网搜索，由本地 Ollama 或云端（DeepSeek / OpenAI 兼容）模型驱动。"
+    />
+    <style>
+      :root {
+        --paper: #fbfbfc;
+        --surface: #ffffff;
+        --surface-2: #f4f4f6;
+        --line: #e6e6ea;
+        --fg: #1a1a1d;
+        --muted: #6e6e78;
+        --accent: #d97757;
+        --accent-hover: #c2613f;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--paper);
+        color: var(--fg);
+        font-family:
+          -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', Roboto,
+          Helvetica, Arial, sans-serif;
+        line-height: 1.6;
+      }
+      .wrap {
+        max-width: 960px;
+        margin: 0 auto;
+        padding: 0 20px;
+      }
+      header {
+        text-align: center;
+        padding: 72px 20px 40px;
+      }
+      .logo {
+        width: 96px;
+        height: 96px;
+        margin: 0 auto 20px;
+        display: block;
+        filter: drop-shadow(0 8px 20px rgba(217, 119, 87, 0.25));
+      }
+      h1 {
+        font-size: 2.2rem;
+        margin: 0 0 8px;
+        letter-spacing: 0.5px;
+      }
+      .tagline {
+        color: var(--muted);
+        font-size: 1.1rem;
+        margin: 0 auto 28px;
+        max-width: 620px;
+      }
+      .btns {
+        display: flex;
+        gap: 12px;
+        justify-content: center;
+        flex-wrap: wrap;
+      }
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 12px 22px;
+        border-radius: 12px;
+        text-decoration: none;
+        font-weight: 600;
+        font-size: 0.98rem;
+        border: 1px solid var(--line);
+        color: var(--fg);
+        background: var(--surface);
+        transition: all 0.15s;
+      }
+      .btn:hover {
+        border-color: var(--accent);
+      }
+      .btn.primary {
+        background: var(--accent);
+        color: #fff;
+        border-color: var(--accent);
+      }
+      .btn.primary:hover {
+        background: var(--accent-hover);
+        border-color: var(--accent-hover);
+      }
+      .note {
+        color: var(--muted);
+        font-size: 0.85rem;
+        margin-top: 14px;
+      }
+      section {
+        padding: 32px 0;
+      }
+      h2 {
+        font-size: 1.4rem;
+        margin: 0 0 18px;
+        text-align: center;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 14px;
+      }
+      .card {
+        background: var(--surface-2);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 18px;
+      }
+      .card .ico {
+        font-size: 1.5rem;
+      }
+      .card h3 {
+        margin: 8px 0 4px;
+        font-size: 1.02rem;
+      }
+      .card p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+      ol.steps {
+        max-width: 640px;
+        margin: 0 auto;
+        padding-left: 22px;
+      }
+      ol.steps li {
+        margin: 8px 0;
+      }
+      code {
+        background: var(--surface-2);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 1px 6px;
+        font-size: 0.88em;
+      }
+      footer {
+        text-align: center;
+        color: var(--muted);
+        font-size: 0.85rem;
+        padding: 40px 20px 60px;
+        border-top: 1px solid var(--line);
+        margin-top: 24px;
+      }
+      footer a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <svg class="logo" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" aria-label="Hemilier">
+        <rect x="6" y="6" width="88" height="88" rx="22" fill="#d2552c" />
+        <circle cx="50" cy="50" r="29" fill="none" stroke="#fbf3ea" stroke-width="12" />
+      </svg>
+      <h1>Hemilier 桌面智能体</h1>
+      <p class="tagline">
+        对话 + 工具调用 + 文件/命令操作 + 联网搜索的桌面 AI 智能体，由本地 Ollama 或云端
+        DeepSeek / OpenAI 兼容模型驱动。
+      </p>
+      <div class="btns">
+        <a
+          class="btn primary"
+          href="https://github.com/hemilier001-afk/Memilier/releases/download/v0.1.0/Hemilier-0.1.0-win.zip"
+          >⬇ 下载 Windows 版</a
+        >
+        <a class="btn" href="https://github.com/hemilier001-afk/Memilier/releases/latest">所有版本</a>
+        <a class="btn" href="./操作手册-Windows.pdf">操作手册</a>
+        <a class="btn" href="https://github.com/hemilier001-afk/Memilier">源码 (GitHub)</a>
+      </div>
+      <p class="note">
+        免安装 · 解压双击运行 · 你的 API Key 仅加密保存在本机，不上传任何第三方
+      </p>
+    </header>
+
+    <div class="wrap">
+      <section>
+        <h2>能做什么</h2>
+        <div class="grid">
+          <div class="card">
+            <div class="ico">💬</div>
+            <h3>智能对话</h3>
+            <p>流式输出，Markdown / 代码高亮 / 数学公式，多轮会话与历史。</p>
+          </div>
+          <div class="card">
+            <div class="ico">🛠️</div>
+            <h3>工具调用</h3>
+            <p>自主读写文件、执行命令、搜索代码，完成多步骤任务。</p>
+          </div>
+          <div class="card">
+            <div class="ico">🌐</div>
+            <h3>联网搜索</h3>
+            <p>内置免密钥联网搜索与网页读取，获取最新资料。</p>
+          </div>
+          <div class="card">
+            <div class="ico">🧠</div>
+            <h3>多模型</h3>
+            <p>本地 Ollama + 云端 DeepSeek / OpenAI / MiniMax，对话内随时切换。</p>
+          </div>
+          <div class="card">
+            <div class="ico">🛒</div>
+            <h3>插件市场</h3>
+            <p>一键安装 Word / Excel / PPT / PDF / 数据 / 图片 技能包。</p>
+          </div>
+          <div class="card">
+            <div class="ico">🔌</div>
+            <h3>MCP 扩展</h3>
+            <p>接入 MCP 服务器（stdio / http / sse），扩展任意外部能力。</p>
+          </div>
+          <div class="card">
+            <div class="ico">🔐</div>
+            <h3>安全沙箱</h3>
+            <p>文件/命令限定在工作区目录；写操作与危险命令需授权确认。</p>
+          </div>
+          <div class="card">
+            <div class="ico">🗂️</div>
+            <h3>工作台</h3>
+            <p>文件树 / 可编辑预览 / Diff / 计划 / 记忆 / Git / 终端。</p>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>三步上手</h2>
+        <ol class="steps">
+          <li>到 <a href="https://github.com/hemilier001-afk/Memilier/releases/latest">Releases</a> 下载 <code>Hemilier-0.1.0-win.zip</code>，右键全部解压。</li>
+          <li>双击 <code>Hemilier.exe</code> 运行（首次 SmartScreen 选「更多信息 → 仍要运行」）。</li>
+          <li>打开「设置 → 模型」填入你自己的 API Key（推荐 <code>deepseek-chat</code>），即可开始。</li>
+        </ol>
+      </section>
+    </div>
+
+    <footer>
+      开源于
+      <a href="https://github.com/hemilier001-afk/Memilier">GitHub</a>
+      · MIT License · © 2026 Hemilier
+    </footer>
+  </body>
+</html>
