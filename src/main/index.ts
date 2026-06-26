@@ -1,12 +1,5 @@
-import {
-  appendFileSync,
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  writeFileSync
-} from 'node:fs'
-import { dirname, join } from 'node:path'
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { app, BrowserWindow, nativeImage, session, shell } from 'electron'
 import { registerIpc } from './ipc'
 import { setupAppMenu } from './menu'
@@ -50,26 +43,6 @@ if (!gotSingleInstanceLock) {
       mainWindow.focus()
     }
   })
-}
-
-// 应用更名后，数据目录从 claude-desktop-agent 迁到 hemilier-desktop-agent。
-// 首次启动时把旧目录的数据拷过来，避免历史对话 / 设置丢失。
-function migrateUserData(): void {
-  const dir = app.getPath('userData')
-  const oldDir = join(dirname(dir), 'claude-desktop-agent')
-  if (oldDir === dir || !existsSync(oldDir)) return
-  mkdirSync(dir, { recursive: true })
-  for (const f of ['settings.json', 'conversations.json', 'projects.json', 'routines.json']) {
-    const src = join(oldDir, f)
-    const dst = join(dir, f)
-    if (existsSync(src) && !existsSync(dst)) {
-      try {
-        copyFileSync(src, dst)
-      } catch {
-        /* 忽略单个文件拷贝失败 */
-      }
-    }
-  }
 }
 
 // 开发模式下让 Dock/任务栏也显示自定义图标（打包版用 bundle 内的图标）
@@ -197,7 +170,6 @@ function createWindow(): void {
 app.whenReady().then(() => {
   if (!gotSingleInstanceLock) return
   setupLogging()
-  migrateUserData()
   // 允许麦克风（语音输入用）
   session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
     callback(permission === 'media')

@@ -6,7 +6,7 @@ module.exports = {
     extend: {
       colors: {
         // 语义化色板，由 index.css 的 CSS 变量驱动（深浅主题切换）
-        // 参考 Claude 的暖奶油底 + 珊瑚橙强调色
+        // 暖中性底 + 珊瑚橙强调色
         accent: {
           DEFAULT: 'var(--accent)',
           hover: 'var(--accent-hover)',

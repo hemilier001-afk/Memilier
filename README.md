@@ -2,8 +2,6 @@
 
 一个运行在桌面端的智能体应用：对话 + 工具调用 + 文件/命令操作 + 联网搜索，由本地 **Ollama** 或云端（DeepSeek / MiniMax / OpenAI 兼容）模型驱动。基于 Electron + React + TypeScript。
 
-> 界面参考 Claude / Codex 桌面版，品牌为 Hemilier。
-
 ## 下载安装（普通用户）
 
 到本仓库的 **[Releases](../../releases)** 页面下载：
@@ -57,7 +55,6 @@ CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --win --x64 --config elec
 ## 文档
 
 - [Windows 操作手册](./docs/操作手册-Windows.pdf) ｜ [通用操作手册](./docs/操作手册.pdf)
-- [项目开发文档 CLAUDE.md](./CLAUDE.md)（架构、智能体循环、扩展指南）
 
 ## 许可证
 
