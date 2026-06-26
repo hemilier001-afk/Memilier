@@ -1,0 +1,22 @@
+appId: com.example.hemilier-desktop-agent
+productName: Hemilier
+# 使用本地已解压的 Electron，避免 electron-builder 联网重新下载二进制
+electronDist: node_modules/electron/dist
+directories:
+  output: dist
+  buildResources: build
+files:
+  - out/**/*
+  - package.json
+mac:
+  category: public.app-category.developer-tools
+  icon: build/icon.icns
+  target:
+    - dmg
+win:
+  icon: build/icon.png
+  target:
+    - nsis
+linux:
+  target:
+    - AppImage

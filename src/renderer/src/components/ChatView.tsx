@@ -1,0 +1,734 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useStore, type ToolView } from '../store'
+import { useT } from '../i18n'
+import { MessageView, StreamingBubble } from './Message'
+
+const STARTERS = [
+  { icon: '📂', text: '列出当前工作区的文件结构' },
+  { icon: '🔍', text: '在工作区里搜索 TODO 注释' },
+  { icon: '✍️', text: '创建一个 hello.txt，写入一句问候' },
+  { icon: '🧠', text: '这个项目是做什么的？帮我快速梳理一下' }
+]
+
+function StarterPrompts(): JSX.Element {
+  const send = useStore((s) => s.send)
+  const t = useT()
+  return (
+    <div className="mt-12 text-center">
+      <p className="mb-5 text-lg font-medium text-muted">{t('starterHint')}</p>
+      <div className="mx-auto grid max-w-xl grid-cols-1 gap-2 sm:grid-cols-2">
+        {STARTERS.map((s) => (
+          <button
+            key={s.text}
+            onClick={() => send(s.text)}
+            className="rounded-xl border border-line bg-surface px-4 py-3 text-left text-sm text-fg transition hover:border-accent hover:text-accent"
+          >
+            <span className="mr-2">{s.icon}</span>
+            {s.text}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+const TOOL_VIEWS: { key: ToolView; label: string; title: string }[] = [
+  { key: 'summary', label: '精简', title: '隐藏工具调用，仅看结论' },
+  { key: 'normal', label: '标准', title: '工具调用折叠显示' },
+  { key: 'verbose', label: '详尽', title: '展开全部工具调用细节' }
+]
+
+function ViewModeToggle(): JSX.Element {
+  const toolView = useStore((s) => s.toolView)
+  const setToolView = useStore((s) => s.setToolView)
+  return (
+    <div className="flex items-center rounded-lg border border-line p-0.5 text-xs">
+      {TOOL_VIEWS.map((v) => (
+        <button
+          key={v.key}
+          onClick={() => setToolView(v.key)}
+          title={v.title}
+          className={`rounded-md px-2 py-1 transition ${
+            toolView === v.key ? 'bg-accent-soft text-accent' : 'text-muted hover:text-fg'
+          }`}
+        >
+          {v.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function ModelSelector(): JSX.Element {
+  const models = useStore((s) => s.models)
+  const active = useStore((s) => s.active)
+  const settings = useStore((s) => s.settings)
+  const setActiveModel = useStore((s) => s.setActiveModel)
+  const refreshModels = useStore((s) => s.refreshModels)
+
+  // 按提供方分组展示
+  const groups = models.reduce<Record<string, typeof models>>((acc, m) => {
+    const key = m.provider ?? '模型'
+    ;(acc[key] ??= []).push(m)
+    return acc
+  }, {})
+
+  return (
+    <div className="flex items-center gap-2">
+      <select
+        value={active?.model || settings?.defaultModel || ''}
+        onChange={(e) => setActiveModel(e.target.value)}
+        className="max-w-[200px] rounded-md border border-line bg-transparent px-2 py-1 text-sm text-fg outline-none focus:border-accent"
+      >
+        {models.length === 0 && <option value="">无可用模型</option>}
+        {Object.entries(groups).map(([provider, list]) => (
+          <optgroup key={provider} label={provider}>
+            {list.map((m) => (
+              <option key={m.name} value={m.name}>
+                {m.label ?? m.name}
+              </option>
+            ))}
+          </optgroup>
+        ))}
+      </select>
+      <button
+        onClick={() => void refreshModels()}
+        title="刷新模型列表"
+        className="text-sm text-muted transition hover:text-fg"
+      >
+        ↻
+      </button>
+    </div>
+  )
+}
+
+function TokenMeter(): JSX.Element | null {
+  const active = useStore((s) => s.active)
+  if (!active || active.messages.length === 0) return null
+  const chars = active.messages.reduce((n, m) => n + (m.content?.length ?? 0), 0)
+  const tokens = Math.ceil(chars / 3) // 粗估：CJK 偏保守
+  const near = chars > 40_000 // 接近 48k 字符的历史预算
+  const label = tokens >= 1000 ? `~${(tokens / 1000).toFixed(1)}k` : `~${tokens}`
+  return (
+    <span
+      title={
+        near ? '对话较长，较早的消息将不再发送给模型（自动裁剪）' : '当前对话上下文的 token 粗估'
+      }
+      className={`text-xs ${near ? 'text-amber-500' : 'text-muted'}`}
+    >
+      {label} tokens{near ? ' ⚠' : ''}
+    </span>
+  )
+}
+
+function PanelToggle(): JSX.Element {
+  const open = useStore((s) => s.rightPanelOpen)
+  const toggle = useStore((s) => s.toggleRightPanel)
+  return (
+    <button
+      onClick={toggle}
+      title={open ? '隐藏右侧面板' : '显示右侧面板（Files / Preview）'}
+      className={`rounded-md border px-2 py-1 text-sm transition ${
+        open ? 'border-accent text-accent' : 'border-line text-muted hover:text-fg'
+      }`}
+    >
+      ▥
+    </button>
+  )
+}
+
+function WorkspacePicker({ dir }: { dir: string }): JSX.Element {
+  const pickActiveWorkspace = useStore((s) => s.pickActiveWorkspace)
+  const name =
+    dir
+      .replace(/[/\\]+$/, '')
+      .split(/[/\\]/)
+      .pop() || dir
+
+  return (
+    <button
+      onClick={() => void pickActiveWorkspace()}
+      title={`工作区：${dir}（点击切换文件夹）`}
+      className="flex max-w-[200px] items-center gap-1 rounded-md border border-line px-2 py-1 text-sm text-muted transition hover:border-accent hover:text-accent"
+    >
+      <span>📁</span>
+      <span className="truncate">{name}</span>
+    </button>
+  )
+}
+
+const MODES: { key: 'auto' | 'plan' | 'chat'; label: string; icon: string; desc: string }[] = [
+  { key: 'auto', label: '自动', icon: '⚡', desc: '放开工具，自主读写文件 / 执行命令' },
+  { key: 'plan', label: '计划', icon: '📋', desc: '只读调研，产出分步计划，不做修改' },
+  { key: 'chat', label: '对话', icon: '💬', desc: '纯聊天，不调用任何工具' }
+]
+
+function ModeMenu(): JSX.Element {
+  const active = useStore((s) => s.active)
+  const setActiveMode = useStore((s) => s.setActiveMode)
+  const [open, setOpen] = useState(false)
+  const cur = MODES.find((m) => m.key === (active?.mode ?? 'auto')) ?? MODES[0]
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-muted transition hover:bg-surface-2 hover:text-fg"
+        title="运行模式"
+      >
+        {cur.icon} {cur.label} <span className="text-[10px]">▾</span>
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          <div className="absolute bottom-full left-0 z-20 mb-1 w-56 rounded-lg border border-line bg-surface py-1 shadow-lg">
+            {MODES.map((m) => (
+              <button
+                key={m.key}
+                onClick={() => {
+                  setActiveMode(m.key)
+                  setOpen(false)
+                }}
+                className={`block w-full px-3 py-1.5 text-left text-xs transition hover:bg-surface-2 ${
+                  cur.key === m.key ? 'text-accent' : 'text-fg'
+                }`}
+              >
+                <div className="font-medium">
+                  {m.icon} {m.label}
+                </div>
+                <div className="text-muted">{m.desc}</div>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+function AttachMenu({
+  onInsert,
+  onImage
+}: {
+  onInsert: (text: string) => void
+  onImage: (dataUrl: string) => void
+}): JSX.Element {
+  const pickActiveWorkspace = useStore((s) => s.pickActiveWorkspace)
+  const setSettingsOpen = useStore((s) => s.setSettingsOpen)
+  const [open, setOpen] = useState(false)
+
+  const uploadFile = async (): Promise<void> => {
+    setOpen(false)
+    const f = await window.api.pickFile()
+    if (f) onInsert(`\n\n[附加文件：${f.name}]\n\`\`\`\n${f.content}\n\`\`\`\n`)
+  }
+
+  const uploadImage = async (): Promise<void> => {
+    setOpen(false)
+    const img = await window.api.pickImage()
+    if (img) onImage(img.dataUrl)
+  }
+
+  const item = 'block w-full px-3 py-1.5 text-left text-xs text-fg transition hover:bg-surface-2'
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex h-7 w-7 items-center justify-center rounded-lg text-base text-muted transition hover:bg-surface-2 hover:text-fg"
+        title="附加"
+      >
+        +
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          <div className="absolute bottom-full left-0 z-20 mb-1 w-44 rounded-lg border border-line bg-surface py-1 shadow-lg">
+            <button onClick={() => void uploadImage()} className={item}>
+              🖼 上传图片
+            </button>
+            <button onClick={() => void uploadFile()} className={item}>
+              📄 上传本地文件
+            </button>
+            <button
+              onClick={() => {
+                setOpen(false)
+                void pickActiveWorkspace()
+              }}
+              className={item}
+            >
+              📁 选择工作区文件夹
+            </button>
+            <button
+              onClick={() => {
+                setOpen(false)
+                setSettingsOpen(true)
+              }}
+              className={item}
+            >
+              🧩 管理插件 / MCP
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+type MicStatus = 'idle' | 'recording' | 'transcribing' | 'error'
+
+function MicButton({ onAppend }: { onAppend: (text: string) => void }): JSX.Element {
+  const [status, setStatus] = useState<MicStatus>('idle')
+  const recRef = useRef<MediaRecorder | null>(null)
+  const chunksRef = useRef<Blob[]>([])
+  const asrConfigured = useStore((s) => !!s.settings?.asrProviderId)
+  const setSettingsOpen = useStore((s) => s.setSettingsOpen)
+
+  const start = async (): Promise<void> => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const mr = new MediaRecorder(stream)
+      chunksRef.current = []
+      mr.ondataavailable = (e): void => {
+        if (e.data.size) chunksRef.current.push(e.data)
+      }
+      mr.onstop = async (): Promise<void> => {
+        stream.getTracks().forEach((t) => t.stop())
+        const blob = new Blob(chunksRef.current, { type: mr.mimeType || 'audio/webm' })
+        setStatus('transcribing')
+        try {
+          const buf = new Uint8Array(await blob.arrayBuffer())
+          const text = await window.api.transcribeAudio(buf, blob.type)
+          if (text.trim()) onAppend(text.trim())
+          setStatus('idle')
+        } catch {
+          setStatus('error')
+          setTimeout(() => setStatus('idle'), 3000)
+        }
+      }
+      recRef.current = mr
+      mr.start()
+      setStatus('recording')
+    } catch {
+      setStatus('error')
+      setTimeout(() => setStatus('idle'), 3000)
+    }
+  }
+
+  const toggle = (): void => {
+    if (!asrConfigured) {
+      setSettingsOpen(true)
+      return
+    }
+    if (status === 'recording') recRef.current?.stop()
+    else if (status === 'idle' || status === 'error') void start()
+  }
+
+  const icon =
+    status === 'recording'
+      ? '🔴'
+      : status === 'transcribing'
+        ? '⏳'
+        : status === 'error'
+          ? '⚠️'
+          : '🎤'
+  const title = !asrConfigured
+    ? '点此到设置配置语音转写（ASR）'
+    : status === 'recording'
+      ? '停止并转写'
+      : status === 'transcribing'
+        ? '转写中…'
+        : '语音输入'
+
+  return (
+    <button
+      onClick={toggle}
+      disabled={status === 'transcribing'}
+      title={title}
+      className={`flex h-7 w-7 items-center justify-center rounded-lg text-sm transition disabled:opacity-60 ${
+        status === 'recording'
+          ? 'bg-accent text-white'
+          : 'text-muted hover:bg-surface-2 hover:text-fg'
+      }`}
+    >
+      {icon}
+    </button>
+  )
+}
+
+function Composer(): JSX.Element {
+  const t = useT()
+  const [text, setText] = useState('')
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [files, setFiles] = useState<string[]>([])
+  const [images, setImages] = useState<string[]>([])
+  const [atQuery, setAtQuery] = useState<string | null>(null)
+  const streaming = useStore((s) => s.streaming)
+  const send = useStore((s) => s.send)
+  const editResend = useStore((s) => s.editResend)
+  const abort = useStore((s) => s.abort)
+  const active = useStore((s) => s.active)
+  const pendingEdit = useStore((s) => s.pendingEdit)
+  const setPendingEdit = useStore((s) => s.setPendingEdit)
+  const ref = useRef<HTMLTextAreaElement>(null)
+
+  const resize = (): void => {
+    const el = ref.current
+    if (el) {
+      el.style.height = 'auto'
+      el.style.height = `${Math.min(el.scrollHeight, 200)}px`
+    }
+  }
+
+  // 接收来自消息「编辑」的注入
+  useEffect(() => {
+    if (pendingEdit) {
+      setText(pendingEdit.content)
+      setEditingId(pendingEdit.id)
+      setPendingEdit(null)
+      setTimeout(() => {
+        ref.current?.focus()
+        resize()
+      }, 0)
+    }
+  }, [pendingEdit, setPendingEdit])
+
+  // 切换对话时载入文件列表（供 @ 引用）
+  useEffect(() => {
+    if (active)
+      window.api
+        .listFiles(active.workspaceDir)
+        .then(setFiles)
+        .catch(() => setFiles([]))
+    setEditingId(null)
+    setText('')
+    setImages([])
+    // 仅在切换对话/工作区时重置，不随消息追加（active 引用变化）而重跑
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active?.id, active?.workspaceDir])
+
+  const addImagesFromFiles = (fileList: FileList | File[]): void => {
+    for (const f of Array.from(fileList)) {
+      if (!f.type.startsWith('image/')) continue
+      const reader = new FileReader()
+      reader.onload = () => {
+        if (typeof reader.result === 'string')
+          setImages((prev) => [...prev, reader.result as string])
+      }
+      reader.readAsDataURL(f)
+    }
+  }
+
+  const onChange = (v: string): void => {
+    setText(v)
+    const m = /@([^\s@]*)$/.exec(v)
+    setAtQuery(m ? m[1] : null)
+    resize()
+  }
+
+  const pickFile = (path: string): void => {
+    setText((t) => t.replace(/@([^\s@]*)$/, `@${path} `))
+    setAtQuery(null)
+    ref.current?.focus()
+  }
+
+  const submit = (): void => {
+    if (streaming || (!text.trim() && images.length === 0)) return
+    if (editingId) {
+      void editResend(editingId, text)
+      setEditingId(null)
+    } else {
+      send(text, images)
+    }
+    setText('')
+    setImages([])
+    setAtQuery(null)
+    if (ref.current) ref.current.style.height = 'auto'
+  }
+
+  const matches =
+    atQuery === null
+      ? []
+      : files.filter((f) => f.toLowerCase().includes(atQuery.toLowerCase())).slice(0, 8)
+
+  return (
+    <div className="border-t border-line bg-paper p-3">
+      <div className="relative mx-auto max-w-3xl">
+        {matches.length > 0 && (
+          <div className="absolute bottom-full left-0 mb-1 max-h-56 w-full overflow-auto rounded-lg border border-line bg-surface py-1 shadow-lg">
+            {matches.map((f) => (
+              <button
+                key={f}
+                onClick={() => pickFile(f)}
+                className="block w-full truncate px-3 py-1 text-left font-mono text-xs text-fg hover:bg-surface-2"
+              >
+                {f}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {editingId && (
+          <div className="mb-1 flex items-center justify-between rounded-lg bg-accent-soft px-3 py-1 text-xs text-accent">
+            <span>{t('editingBanner')}</span>
+            <button
+              onClick={() => {
+                setEditingId(null)
+                setText('')
+              }}
+              className="hover:underline"
+            >
+              {t('cancel')}
+            </button>
+          </div>
+        )}
+
+        <div className="rounded-2xl border border-line bg-surface px-3 py-2.5 shadow-sm transition focus-within:border-accent focus-within:shadow-md">
+          {images.length > 0 && (
+            <div className="mb-2 flex flex-wrap gap-2">
+              {images.map((src, i) => (
+                <div key={i} className="relative">
+                  <img
+                    src={src}
+                    alt=""
+                    className="h-16 w-16 rounded-lg border border-line object-cover"
+                  />
+                  <button
+                    onClick={() => setImages((prev) => prev.filter((_, j) => j !== i))}
+                    className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-neutral-700 text-[10px] text-white"
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <textarea
+            ref={ref}
+            value={text}
+            disabled={!active}
+            rows={1}
+            placeholder={active ? t('composerPh') : t('composerNoConv')}
+            onChange={(e) => onChange(e.target.value)}
+            onPaste={(e) => {
+              const imgs = Array.from(e.clipboardData.files).filter((f) =>
+                f.type.startsWith('image/')
+              )
+              if (imgs.length) {
+                e.preventDefault()
+                addImagesFromFiles(imgs)
+              }
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape' && atQuery !== null) {
+                setAtQuery(null)
+                return
+              }
+              if (e.key === 'Enter' && atQuery === null) {
+                const mode = useStore.getState().settings?.submitKey ?? 'enter'
+                const shouldSend =
+                  mode === 'mod-enter' ? e.metaKey || e.ctrlKey : !e.shiftKey && !e.metaKey
+                if (shouldSend) {
+                  e.preventDefault()
+                  submit()
+                }
+              }
+            }}
+            className="max-h-[200px] w-full resize-none bg-transparent py-1 text-sm text-fg outline-none placeholder:text-muted"
+          />
+          <div className="mt-1 flex items-center justify-between">
+            <div className="flex items-center gap-1">
+              <AttachMenu
+                onInsert={(t) => onChange(text + t)}
+                onImage={(url) => setImages((prev) => [...prev, url])}
+              />
+              <ModeMenu />
+              <MicButton onAppend={(t) => onChange(text + t)} />
+            </div>
+            {streaming ? (
+              <button
+                onClick={abort}
+                title={t('stop')}
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-line text-fg transition hover:bg-surface-2"
+              >
+                <span className="block h-2.5 w-2.5 rounded-[2px] bg-current" />
+              </button>
+            ) : (
+              <button
+                onClick={submit}
+                title={editingId ? t('resend') : t('send')}
+                disabled={!active || (!text.trim() && images.length === 0)}
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent text-white transition hover:bg-accent-hover disabled:opacity-40"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path
+                    d="M12 19V5M12 5l-6 6M12 5l6 6"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export function ChatView(): JSX.Element {
+  const t = useT()
+  const active = useStore((s) => s.active)
+  const view = useStore((s) => s.view)
+  const streaming = useStore((s) => s.streaming)
+  const streamingText = useStore((s) => s.streamingText)
+  const regenerate = useStore((s) => s.regenerate)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
+  // 是否「贴在底部」：贴底时才跟随输出向下滚；用户往上翻则停止跟随，方便阅读历史
+  const stickRef = useRef(true)
+  const [showJump, setShowJump] = useState(false)
+
+  const lastAssistantId = useMemo(() => {
+    const msgs = active?.messages ?? []
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i].role === 'assistant') return msgs[i].id
+    }
+    return null
+  }, [active?.messages])
+
+  const onScroll = (): void => {
+    const el = scrollRef.current
+    if (!el) return
+    const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+    stickRef.current = distFromBottom < 80 // 距底 < 80px 视为贴底
+    setShowJump(!stickRef.current)
+  }
+
+  // 用户向上滚（滚轮/触控板）→ 立即停止跟随，避免流式输出时被自动拽回底部
+  const onWheel = (e: React.WheelEvent): void => {
+    if (e.deltaY < 0 && stickRef.current) {
+      stickRef.current = false
+      setShowJump(true)
+    }
+  }
+
+  const jumpToBottom = (): void => {
+    const el = scrollRef.current
+    if (!el) return
+    el.scrollTo({ top: el.scrollHeight })
+    stickRef.current = true
+    setShowJump(false)
+  }
+
+  // 跟随输出：贴底时自动下滚；刚发送(最后一条是 user)时强制回到底部并恢复跟随
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const msgs = active?.messages ?? []
+    if (msgs[msgs.length - 1]?.role === 'user') {
+      stickRef.current = true
+      setShowJump(false)
+    }
+    if (stickRef.current) el.scrollTo({ top: el.scrollHeight })
+  }, [active?.messages, streamingText, streaming])
+
+  // 监听内容高度变化（代码块/公式/图片渲染完才撑高），贴底时持续跟随——比只依赖 token 更稳
+  useEffect(() => {
+    const el = scrollRef.current
+    const content = contentRef.current
+    if (!el || !content) return
+    const ro = new ResizeObserver(() => {
+      if (stickRef.current) el.scrollTo({ top: el.scrollHeight })
+    })
+    ro.observe(content)
+    return () => ro.disconnect()
+  }, [])
+
+  // 切换对话：回到底部并重置跟随
+  useEffect(() => {
+    stickRef.current = true
+    setShowJump(false)
+    requestAnimationFrame(() =>
+      scrollRef.current?.scrollTo({ top: scrollRef.current?.scrollHeight ?? 0 })
+    )
+  }, [active?.id])
+
+  if (!active) {
+    return (
+      <main className="relative flex flex-1 items-center justify-center text-muted">
+        <div className="region-drag absolute inset-x-0 top-0 h-10" />
+        <div className="text-center">
+          <p className="text-lg text-fg">hemilier 桌面智能体</p>
+          <p className="mt-1 text-sm">{t('emptySubtitle')}</p>
+        </div>
+      </main>
+    )
+  }
+
+  const showStreaming = streaming
+
+  return (
+    <main className="relative flex flex-1 flex-col bg-paper">
+      <header className="region-drag flex items-center justify-between gap-3 border-b border-line px-4 py-2 pt-10">
+        <h1 className="min-w-0 truncate text-sm font-medium text-fg">{active.title}</h1>
+        <div className="flex items-center gap-3">
+          <TokenMeter />
+          <ViewModeToggle />
+          {view === 'chat' && <WorkspacePicker dir={active.workspaceDir} />}
+          <ModelSelector />
+          <button
+            onClick={() => useStore.getState().reflect()}
+            disabled={active.messages.length === 0 || streaming}
+            title="反思沉淀：把本次经验记入记忆 / 沉淀为技能"
+            className="rounded-md border border-line px-2 py-1 text-sm text-muted transition hover:text-fg disabled:opacity-40"
+          >
+            🧠
+          </button>
+          <button
+            onClick={() => useStore.getState().exportActive()}
+            title="导出对话为 Markdown"
+            className="rounded-md border border-line px-2 py-1 text-sm text-muted transition hover:text-fg"
+          >
+            ⬇
+          </button>
+          {view !== 'chat' && <PanelToggle />}
+        </div>
+      </header>
+
+      <div
+        ref={scrollRef}
+        onScroll={onScroll}
+        onWheel={onWheel}
+        className="flex-1 overflow-y-auto px-4 py-6"
+      >
+        <div ref={contentRef} className="mx-auto flex max-w-3xl flex-col gap-6">
+          {active.messages.length === 0 && !showStreaming ? (
+            <StarterPrompts />
+          ) : (
+            active.messages.map((m) => (
+              <MessageView
+                key={m.id}
+                message={m}
+                isLast={!streaming && m.id === lastAssistantId}
+                onRegenerate={regenerate}
+              />
+            ))
+          )}
+          {showStreaming && <StreamingBubble text={streamingText} />}
+        </div>
+      </div>
+
+      {showJump && (
+        <button
+          onClick={jumpToBottom}
+          className="absolute bottom-28 left-1/2 -translate-x-1/2 rounded-full border border-line bg-surface px-3 py-1.5 text-xs text-fg shadow-lg transition hover:bg-surface-2"
+        >
+          {t('scrollToBottom')}
+        </button>
+      )}
+
+      <Composer />
+    </main>
+  )
+}

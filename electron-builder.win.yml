@@ -1,0 +1,24 @@
+appId: com.example.hemilier-desktop-agent
+productName: Hemilier
+# 不设置 electronDist：让 electron-builder 自行下载 Windows 版 Electron 二进制
+directories:
+  output: dist
+  buildResources: build
+# 打包后、压缩前用 resedit 把图标嵌入 .exe（免 Wine）
+afterPack: ./scripts/afterPack.cjs
+files:
+  - out/**/*
+  - package.json
+# 把图标随包带入 resources/，供运行时窗口/任务栏使用
+extraResources:
+  - from: build/icon.png
+    to: icon.png
+  - from: build/icon-win.png
+    to: icon-win.png
+win:
+  icon: build/icon.ico
+  # zip 便携包：免 Wine（NSIS 安装包在 macOS 上需要 Wine），解压后直接运行 .exe
+  target:
+    - zip
+  # 跳过对 .exe 的签名与 rcedit 版本信息写入（这一步需要 Wine，跨平台打包时关闭）
+  signAndEditExecutable: false

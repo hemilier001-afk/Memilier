@@ -1,0 +1,435 @@
+import { type ChildProcess, execFile, spawn } from 'node:child_process'
+import { existsSync, statSync, promises as fsp } from 'node:fs'
+import { basename, dirname } from 'node:path'
+import { BrowserWindow, clipboard, dialog, ipcMain, shell } from 'electron'
+import type {
+  AgentEvent,
+  FsEntry,
+  GitFile,
+  GitStatus,
+  MemoryType,
+  PermissionRequest
+} from '@shared/types'
+
+/** 在工作区跑一条 git 命令 */
+function git(
+  cwd: string,
+  args: string[]
+): Promise<{ code: number; stdout: string; stderr: string }> {
+  return new Promise((resolve) => {
+    execFile('git', args, { cwd, maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) => {
+      const code =
+        err && typeof (err as NodeJS.ErrnoException).code === 'number'
+          ? ((err as unknown as { code: number }).code ?? 1)
+          : err
+            ? 1
+            : 0
+      resolve({ code, stdout: stdout?.toString() ?? '', stderr: stderr?.toString() ?? '' })
+    })
+  })
+}
+
+function parseGitStatus(out: string): { branch: string; files: GitFile[] } {
+  const lines = out.split('\n').filter(Boolean)
+  let branch = ''
+  const files: GitFile[] = []
+  for (const line of lines) {
+    if (line.startsWith('## ')) {
+      const head = line.slice(3)
+      if (head.startsWith('No commits yet on ')) branch = head.slice('No commits yet on '.length)
+      else branch = head.split('...')[0].split(' ')[0]
+      continue
+    }
+    const x = line[0]
+    const y = line[1]
+    let path = line.slice(3)
+    if (path.includes(' -> ')) path = path.split(' -> ')[1]
+    files.push({ path, x, y, staged: x !== ' ' && x !== '?' })
+  }
+  return { branch, files }
+}
+import { runAgent } from './agent/loop'
+import { PermissionManager } from './agent/permission'
+import { imageStore } from './images'
+import { mcpManager } from './mcp/manager'
+import { pluginManager } from './plugins/manager'
+import { skillManager } from './skills/manager'
+import { memory } from './memory'
+import { listAllModels, resolveProvider } from './providers/registry'
+import { routineManager } from './routines/manager'
+import { resolveInWorkspace } from './security'
+import { store } from './store'
+
+export function registerIpc(getWindow: () => BrowserWindow | null): void {
+  const sendToRenderer = (channel: string, payload: unknown): void => {
+    getWindow()?.webContents.send(channel, payload)
+  }
+
+  const permission = new PermissionManager(
+    (req: PermissionRequest) => sendToRenderer('permission:request', req),
+    () => store.getSettings()
+  )
+
+  const aborters = new Map<string, AbortController>()
+
+  ipcMain.handle('ollama:listModels', () => listAllModels(store.getSettings()))
+
+  ipcMain.handle('settings:get', () => store.getSettings())
+  ipcMain.handle('settings:set', (_e, patch) => store.setSettings(patch))
+
+  ipcMain.handle('conversations:list', () => store.listConversations())
+  ipcMain.handle('conversations:get', (_e, id: string) => store.getConversation(id))
+  ipcMain.handle(
+    'conversations:create',
+    (_e, kind: 'chat' | 'cowork' | 'code' = 'chat', projectId?: string) =>
+      store.createConversation(kind, projectId)
+  )
+  ipcMain.handle('conversations:setProject', (_e, id: string, projectId: string | null) =>
+    store.setConversationProject(id, projectId)
+  )
+  ipcMain.handle('projects:list', () => store.listProjects())
+  ipcMain.handle('projects:create', (_e, name: string, kind: 'chat' | 'cowork' | 'code') =>
+    store.createProject(name, kind)
+  )
+  ipcMain.handle('projects:rename', (_e, id: string, name: string) => store.renameProject(id, name))
+  ipcMain.handle('projects:delete', (_e, id: string) => store.deleteProject(id))
+  ipcMain.handle('conversations:delete', (_e, id: string) => {
+    store.deleteConversation(id)
+    imageStore.deleteConversation(id) // 一并清理该会话的图片文件
+  })
+  ipcMain.handle('images:read', (_e, ref: string) => imageStore.resolve(ref))
+  // 原生剪贴板（比 navigator.clipboard 在 Electron 沙箱下更可靠）
+  ipcMain.handle('clipboard:write', (_e, text: string) => clipboard.writeText(text))
+  ipcMain.handle('conversations:rename', (_e, id: string, title: string) =>
+    store.renameConversation(id, title)
+  )
+  ipcMain.handle('conversations:setModel', (_e, id: string, model: string) =>
+    store.setConversationModel(id, model)
+  )
+  ipcMain.handle('conversations:setMode', (_e, id: string, mode: 'auto' | 'plan' | 'chat') =>
+    store.setConversationMode(id, mode)
+  )
+  ipcMain.handle('conversations:setWorkspace', (_e, id: string, dir: string) =>
+    store.setConversationWorkspace(id, dir)
+  )
+
+  ipcMain.handle('dialog:pickWorkspace', async () => {
+    const win = getWindow()
+    const res = win
+      ? await dialog.showOpenDialog(win, { properties: ['openDirectory'] })
+      : await dialog.showOpenDialog({ properties: ['openDirectory'] })
+    return res.canceled ? null : res.filePaths[0]
+  })
+
+  // 选择任意本地文件，读入文本作为对话上下文（截断 100k）
+  ipcMain.handle('dialog:pickFile', async () => {
+    const win = getWindow()
+    const opts = { properties: ['openFile' as const] }
+    const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+    if (res.canceled || !res.filePaths[0]) return null
+    const fp = res.filePaths[0]
+    try {
+      const raw = await fsp.readFile(fp, 'utf8')
+      const content = raw.length > 100_000 ? `${raw.slice(0, 100_000)}\n…（已截断）` : raw
+      return { name: basename(fp), content }
+    } catch (e) {
+      return { name: basename(fp), content: `（无法读取：${String(e)}）` }
+    }
+  })
+
+  // 选择本地图片，读成 data URL（供视觉模型）
+  ipcMain.handle('dialog:pickImage', async () => {
+    const win = getWindow()
+    const opts = {
+      properties: ['openFile' as const],
+      filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'] }]
+    }
+    const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+    if (res.canceled || !res.filePaths[0]) return null
+    const fp = res.filePaths[0]
+    const ext = (fp.split('.').pop() || 'png').toLowerCase()
+    const mime = ext === 'jpg' ? 'jpeg' : ext
+    const buf = await fsp.readFile(fp)
+    return {
+      name: basename(fp),
+      dataUrl: `data:image/${mime};base64,${buf.toString('base64')}`
+    }
+  })
+
+  ipcMain.handle('permission:respond', (_e, id: string, approved: boolean, remember: boolean) =>
+    permission.respond(id, approved, remember)
+  )
+
+  ipcMain.handle('workspace:readDir', async (_e, workspaceDir: string, relPath: string) => {
+    const abs = resolveInWorkspace(workspaceDir, relPath || '.')
+    const entries = await fsp.readdir(abs, { withFileTypes: true })
+    return entries
+      .map((e): FsEntry => ({ name: e.name, isDir: e.isDirectory() }))
+      .sort((a, b) => Number(b.isDir) - Number(a.isDir) || a.name.localeCompare(b.name))
+  })
+
+  ipcMain.handle('workspace:readFile', async (_e, workspaceDir: string, relPath: string) => {
+    const abs = resolveInWorkspace(workspaceDir, relPath)
+    const content = await fsp.readFile(abs, 'utf8')
+    return content.length > 200_000 ? `${content.slice(0, 200_000)}\n…（已截断）` : content
+  })
+
+  // 应用内编辑器：把内容写回工作区文件（沙箱内，自动建父目录）
+  ipcMain.handle(
+    'workspace:writeFile',
+    async (_e, workspaceDir: string, relPath: string, content: string) => {
+      const abs = resolveInWorkspace(workspaceDir, relPath)
+      await fsp.mkdir(dirname(abs), { recursive: true })
+      await fsp.writeFile(abs, content, 'utf8')
+    }
+  )
+
+  // 工作区文件平铺列表（供 @ 引用），跳过常见大目录，最多 800 条
+  ipcMain.handle('workspace:listFiles', async (_e, workspaceDir: string) => {
+    const skip = new Set(['node_modules', '.git', 'out', 'dist', '.next', 'build', '.hemilier'])
+    const out: string[] = []
+    const walk = async (rel: string): Promise<void> => {
+      if (out.length >= 800) return
+      let entries: import('node:fs').Dirent[]
+      try {
+        entries = await fsp.readdir(resolveInWorkspace(workspaceDir, rel || '.'), {
+          withFileTypes: true
+        })
+      } catch {
+        return
+      }
+      for (const e of entries) {
+        if (out.length >= 800) return
+        const childRel = rel ? `${rel}/${e.name}` : e.name
+        if (e.isDirectory()) {
+          if (!skip.has(e.name) && !e.name.startsWith('.')) await walk(childRel)
+        } else {
+          out.push(childRel)
+        }
+      }
+    }
+    await walk('')
+    return out.sort()
+  })
+
+  // ——— Git 集成 ———
+  ipcMain.handle('git:status', async (_e, ws: string): Promise<GitStatus> => {
+    const probe = await git(ws, ['rev-parse', '--is-inside-work-tree'])
+    if (probe.code !== 0) return { isRepo: false, branch: '', files: [] }
+    const r = await git(ws, ['status', '--porcelain=v1', '-b'])
+    return { isRepo: true, ...parseGitStatus(r.stdout) }
+  })
+  ipcMain.handle('git:diff', async (_e, ws: string, path: string, staged: boolean) => {
+    const args = staged ? ['diff', '--cached', '--', path] : ['diff', '--', path]
+    const r = await git(ws, args)
+    return r.stdout || ''
+  })
+  ipcMain.handle('git:stage', async (_e, ws: string, path: string) => {
+    await git(ws, ['add', '--', path])
+  })
+  ipcMain.handle('git:unstage', async (_e, ws: string, path: string) => {
+    await git(ws, ['restore', '--staged', '--', path])
+  })
+  ipcMain.handle('git:commit', async (_e, ws: string, message: string) => {
+    const r = await git(ws, ['commit', '-m', message])
+    return { ok: r.code === 0, message: (r.stdout + r.stderr).trim() }
+  })
+  ipcMain.handle('git:init', async (_e, ws: string) => {
+    await git(ws, ['init'])
+  })
+
+  // ——— 项目记忆（治理：类型/来源/时间/可删除） ———
+  ipcMain.handle('memory:list', (_e, ws: string) => memory.list(ws))
+  ipcMain.handle('memory:add', (_e, ws: string, text: string, type: MemoryType) =>
+    memory.add(ws, text, type, 'user')
+  )
+  ipcMain.handle('memory:forget', (_e, ws: string, id: string) => memory.forget(ws, id))
+
+  ipcMain.handle('conversations:truncateFrom', (_e, id: string, messageId: string) =>
+    store.truncateFrom(id, messageId)
+  )
+
+  ipcMain.handle('conversations:export', async (_e, id: string) => {
+    const conv = store.getConversation(id)
+    if (!conv) return
+    const md = [`# ${conv.title}`, '']
+    for (const m of conv.messages) {
+      if (m.role === 'user') md.push(`## 🧑 用户`, '', m.content, '')
+      else if (m.role === 'assistant') {
+        md.push(`## 🤖 助手`, '', m.content || '', '')
+        for (const tc of m.toolCalls ?? []) md.push(`> 🛠 调用工具 \`${tc.name}\``, '')
+      } else if (m.role === 'tool') md.push('```', m.content, '```', '')
+    }
+    const win = getWindow()
+    const opts = {
+      defaultPath: `${conv.title.replace(/[/\\:*?"<>|]/g, '_')}.md`,
+      filters: [{ name: 'Markdown', extensions: ['md'] }]
+    }
+    const res = win ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts)
+    if (!res.canceled && res.filePath) await fsp.writeFile(res.filePath, md.join('\n'), 'utf8')
+  })
+
+  // 语音转写：把渲染层录的音频发到 ASR 端点（OpenAI 兼容 /audio/transcriptions）
+  ipcMain.handle('asr:transcribe', async (_e, bytes: Uint8Array, mime: string) => {
+    const s = store.getSettings()
+    const provider = (s.providers ?? []).find((p) => p.id === s.asrProviderId)
+    if (!provider) throw new Error('尚未配置语音转写提供方，请在设置 → 语音转写中选择。')
+    const model = s.asrModel || 'whisper-1'
+    const ext = mime.includes('mp4') ? 'mp4' : mime.includes('ogg') ? 'ogg' : 'webm'
+    const form = new FormData()
+    form.append('model', model)
+    form.append('file', new Blob([bytes], { type: mime }), `audio.${ext}`)
+    const res = await fetch(`${provider.baseUrl}/audio/transcriptions`, {
+      method: 'POST',
+      headers: provider.apiKey ? { Authorization: `Bearer ${provider.apiKey}` } : {},
+      body: form
+    })
+    if (!res.ok) {
+      const txt = await res.text().catch(() => '')
+      throw new Error(`转写失败 (${res.status})${txt ? `：${txt.slice(0, 200)}` : ''}`)
+    }
+    const data = (await res.json()) as { text?: string }
+    return data.text ?? ''
+  })
+
+  ipcMain.handle('skills:list', async () => {
+    const ws = store.getSettings().workspaceDir
+    const pluginDirs = pluginManager.activePlugins().flatMap((p) => p.skillDirs)
+    const skills = await skillManager.listSkills(ws, pluginDirs)
+    return skills.map((s) => ({ name: s.name, description: s.description, source: s.source }))
+  })
+
+  ipcMain.handle('plugins:list', () =>
+    pluginManager.listPlugins().map((p) => ({
+      name: p.name,
+      description: p.description,
+      enabled: p.enabled,
+      mcpCount: Object.keys(p.mcpServers).length,
+      hasSkills: p.skillDirs.length > 0
+    }))
+  )
+  ipcMain.handle('plugins:setEnabled', (_e, name: string, enabled: boolean) =>
+    pluginManager.setEnabled(name, enabled)
+  )
+  ipcMain.handle('plugins:openDir', () => shell.openPath(pluginManager.dir()))
+  ipcMain.handle('plugins:catalog', () => pluginManager.catalog())
+  ipcMain.handle('plugins:installCatalog', (_e, id: string) => pluginManager.installFromCatalog(id))
+  ipcMain.handle('plugins:uninstall', (_e, id: string) => pluginManager.uninstall(id))
+  ipcMain.handle('plugins:install', async () => {
+    const res = await dialog.showOpenDialog({
+      title: '选择插件文件夹（含 plugin.json）',
+      properties: ['openDirectory']
+    })
+    if (res.canceled || !res.filePaths[0]) return { ok: false }
+    return pluginManager.installFromDir(res.filePaths[0])
+  })
+
+  // MCP 连接状态探测（用户配置 + 启用插件提供的 server）
+  ipcMain.handle('mcp:status', () => {
+    const s = store.getSettings()
+    const pluginMcp = pluginManager.mcpServers(pluginManager.activePlugins())
+    return mcpManager.status({ ...pluginMcp, ...s.mcpServers })
+  })
+
+  ipcMain.handle('agent:abort', (_e, id: string) => {
+    aborters.get(id)?.abort()
+  })
+
+  // ——— 终端：在工作区内执行命令并把输出流式推回渲染进程 ———
+  const termProcs = new Map<string, ChildProcess>()
+  ipcMain.handle(
+    'terminal:run',
+    (_e, conversationId: string, workspaceDir: string, command: string) => {
+      // 校验工作目录必须是已存在的目录，避免任意/非法 cwd
+      if (!workspaceDir || !existsSync(workspaceDir) || !statSync(workspaceDir).isDirectory()) {
+        sendToRenderer('terminal:event', {
+          conversationId,
+          type: 'err',
+          data: `工作目录无效：${workspaceDir}`
+        })
+        return
+      }
+      termProcs.get(conversationId)?.kill()
+      const isWin = process.platform === 'win32'
+      const child = spawn(command, {
+        cwd: workspaceDir,
+        shell: isWin ? true : '/bin/sh'
+      })
+      termProcs.set(conversationId, child)
+      const emit = (type: 'out' | 'err' | 'exit', data?: string, code?: number | null): void =>
+        sendToRenderer('terminal:event', { conversationId, type, data, code })
+      child.stdout?.on('data', (d) => emit('out', d.toString()))
+      child.stderr?.on('data', (d) => emit('err', d.toString()))
+      child.on('error', (err) => emit('err', err.message))
+      child.on('close', (code) => {
+        termProcs.delete(conversationId)
+        emit('exit', undefined, code)
+      })
+    }
+  )
+  ipcMain.handle('terminal:kill', (_e, conversationId: string) => {
+    termProcs.get(conversationId)?.kill()
+    termProcs.delete(conversationId)
+  })
+
+  // ——— 例程 / 后台任务 ———
+  const emitAgent = (conversationId: string, event: AgentEvent): void =>
+    sendToRenderer('agent:event', { conversationId, event })
+  const emitTasks = (t: unknown): void => sendToRenderer('tasks:update', t)
+
+  ipcMain.handle('routines:list', () => routineManager.list())
+  ipcMain.handle('routines:save', (_e, r) => routineManager.save(r))
+  ipcMain.handle('routines:delete', (_e, id: string) => routineManager.delete(id))
+  ipcMain.handle('routines:runNow', (_e, id: string) =>
+    routineManager.run(id, emitAgent, emitTasks)
+  )
+  ipcMain.handle('tasks:list', () => routineManager.listTasks())
+
+  routineManager.startScheduler(emitAgent, emitTasks)
+
+  // 跟踪每个会话正在进行的运行，确保同一会话的运行严格串行（不并发改同一份 messages）
+  const running = new Map<string, Promise<void>>()
+  const runConversation = async (
+    conversationId: string,
+    userContent?: string,
+    images?: string[]
+  ): Promise<void> => {
+    aborters.get(conversationId)?.abort()
+    // 等上一轮真正结束后再开始，避免两个 runAgent 同时修改同一个对话对象
+    const prev = running.get(conversationId)
+    if (prev) await prev.catch(() => {})
+    const ac = new AbortController()
+    aborters.set(conversationId, ac)
+    const settings = store.getSettings()
+    const modelId = store.getConversation(conversationId)?.model || settings.defaultModel
+    const provider = resolveProvider(modelId, settings)
+    const task = (async () => {
+      try {
+        await runAgent({
+          conversationId,
+          userContent,
+          images,
+          provider,
+          permission,
+          signal: ac.signal,
+          send: (event: AgentEvent) => sendToRenderer('agent:event', { conversationId, event })
+        })
+      } finally {
+        // 串行保证：旧任务的 finally 必在下一次 runConversation 注册新任务前执行完
+        if (aborters.get(conversationId) === ac) aborters.delete(conversationId)
+        running.delete(conversationId)
+      }
+    })()
+    running.set(conversationId, task)
+    return task
+  }
+
+  ipcMain.handle('agent:send', (_e, conversationId: string, content: string, images?: string[]) =>
+    runConversation(conversationId, content, images)
+  )
+
+  ipcMain.handle('agent:regenerate', (_e, conversationId: string) => {
+    store.trimToLastUser(conversationId)
+    return runConversation(conversationId)
+  })
+}
