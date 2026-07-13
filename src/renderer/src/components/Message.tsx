@@ -151,7 +151,38 @@ export function MessageView({
   onRegenerate?: () => void
 }): JSX.Element | null {
   const setPendingEdit = useStore((s) => s.setPendingEdit)
+  const toolView = useStore((s) => s.toolView)
   if (message.role === 'tool') return null // 工具结果显示在 assistant 的工具卡片里
+
+  // 过程步骤（带工具调用的 assistant 消息）：仿 Claude 收纳成弱化的可折叠块，
+  // 不以正式回复形态平铺；只有最终回答（无工具调用）保持正常回复样式。
+  if (message.role === 'assistant' && message.toolCalls?.length) {
+    const firstLine = (message.content || '').split('\n')[0].slice(0, 80)
+    const running = message.toolCalls.some(
+      (tc) => tc.status === 'running' || tc.status === 'pending'
+    )
+    return (
+      <details open={toolView === 'verbose'} className="pl-10">
+        <summary className="flex cursor-pointer list-none items-center gap-2 py-0.5 text-xs text-muted transition hover:text-fg [&::-webkit-details-marker]:hidden">
+          <span className={running ? 'animate-pulse' : ''}>⚙️</span>
+          <span className="truncate">
+            {firstLine || '执行工具'} · {message.toolCalls.length} 个工具调用
+          </span>
+          <span className="shrink-0 opacity-60">▸</span>
+        </summary>
+        <div className="my-1 ml-1 border-l-2 border-line pl-3">
+          {message.content && (
+            <div className="text-sm text-muted">
+              <Markdown text={message.content} />
+            </div>
+          )}
+          {message.toolCalls.map((tc) => (
+            <ToolCallCard key={tc.id} tc={tc} />
+          ))}
+        </div>
+      </details>
+    )
+  }
 
   // 用户消息：右对齐气泡（品牌珊瑚色）
   if (message.role === 'user') {
