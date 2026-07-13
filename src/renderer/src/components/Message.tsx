@@ -80,15 +80,23 @@ function CopyButton({
 }
 
 // 代码块：悬停显示「复制」按钮
-function Pre({ node: _node, ...props }: any): JSX.Element {
+function Pre({ node: _node, children, ...props }: any): JSX.Element {
   const ref = useRef<HTMLPreElement>(null)
+  // 从子 code 元素的 className（language-xxx）提取语言名，显示在头部栏
+  const child = Array.isArray(children) ? children[0] : children
+  const lang = /language-([\w-]+)/.exec(child?.props?.className ?? '')?.[1] ?? ''
   return (
-    <div className="group/code relative">
-      <CopyButton
-        getText={() => ref.current?.innerText ?? ''}
-        className="absolute right-2 top-2 rounded bg-black/50 px-2 py-0.5 text-xs text-white opacity-0 transition group-hover/code:opacity-100"
-      />
-      <pre ref={ref} {...props} />
+    <div className="code-block">
+      <div className="code-head">
+        <span>{lang || 'code'}</span>
+        <CopyButton
+          getText={() => ref.current?.innerText ?? ''}
+          className="rounded px-1.5 py-0.5 transition hover:bg-white/10 hover:text-white"
+        />
+      </div>
+      <pre ref={ref} {...props}>
+        {children}
+      </pre>
     </div>
   )
 }
