@@ -73,6 +73,8 @@ interface UIState {
   setPendingEdit: (p: { id: string; content: string } | null) => void
   exportActive: () => void
   reflect: () => void
+  /** /compact：压缩当前对话的较早历史为摘要 */
+  compact: () => Promise<void>
   abort: () => void
   setActiveModel: (model: string) => void
   setActiveMode: (mode: 'auto' | 'plan' | 'chat') => void
@@ -299,6 +301,30 @@ export const useStore = create<UIState>((set, get) => ({
   exportActive: () => {
     const active = get().active
     if (active) void window.api.exportConversation(active.id)
+  },
+
+  compact: async () => {
+    const active = get().active
+    if (!active || get().streaming) return
+    const res = await window.api.compactConversation(active.id)
+    if (res.ok && res.conversation) {
+      set({ active: res.conversation })
+    } else if (res.error) {
+      set({
+        active: {
+          ...active,
+          messages: [
+            ...active.messages,
+            {
+              id: crypto.randomUUID(),
+              role: 'assistant',
+              content: `⚠️ 压缩失败：${res.error}`,
+              createdAt: Date.now()
+            }
+          ]
+        }
+      })
+    }
   },
 
   reflect: () => {

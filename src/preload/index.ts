@@ -31,6 +31,8 @@ const api: Api = {
   regenerate: (conversationId) => ipcRenderer.invoke('agent:regenerate', conversationId),
   truncateFrom: (conversationId, messageId) =>
     ipcRenderer.invoke('conversations:truncateFrom', conversationId, messageId),
+  compactConversation: (conversationId) =>
+    ipcRenderer.invoke('conversations:compact', conversationId),
   exportConversation: (conversationId) =>
     ipcRenderer.invoke('conversations:export', conversationId),
   listFiles: (workspaceDir) => ipcRenderer.invoke('workspace:listFiles', workspaceDir),

@@ -370,6 +370,68 @@ function Composer(): JSX.Element {
   const setPendingEdit = useStore((s) => s.setPendingEdit)
   const ref = useRef<HTMLTextAreaElement>(null)
 
+  // 斜杠命令（输入框以 / 开头且未含空格时弹出）
+  const slashQuery = /^\/(\S*)$/.exec(text)?.[1] ?? null
+  const SLASH_COMMANDS: { id: string; label: string; desc: string; run: () => void }[] = [
+    {
+      id: 'new',
+      label: '/new',
+      desc: '新建对话',
+      run: () => void useStore.getState().newConversation()
+    },
+    {
+      id: 'compact',
+      label: '/compact',
+      desc: '压缩较早历史为摘要，腾出上下文',
+      run: () => void useStore.getState().compact()
+    },
+    {
+      id: 'plan',
+      label: '/plan',
+      desc: '切到计划模式（只读调研）',
+      run: () => useStore.getState().setActiveMode('plan')
+    },
+    {
+      id: 'auto',
+      label: '/auto',
+      desc: '切到自动模式（全部工具）',
+      run: () => useStore.getState().setActiveMode('auto')
+    },
+    {
+      id: 'chat',
+      label: '/chat',
+      desc: '切到纯对话模式（不用工具）',
+      run: () => useStore.getState().setActiveMode('chat')
+    },
+    {
+      id: 'export',
+      label: '/export',
+      desc: '导出对话为 Markdown',
+      run: () => useStore.getState().exportActive()
+    },
+    {
+      id: 'reflect',
+      label: '/reflect',
+      desc: '回顾本次对话，沉淀记忆/技能',
+      run: () => useStore.getState().reflect()
+    },
+    {
+      id: 'settings',
+      label: '/settings',
+      desc: '打开设置',
+      run: () => useStore.getState().setSettingsOpen(true)
+    }
+  ]
+  const slashMatches =
+    slashQuery === null
+      ? []
+      : SLASH_COMMANDS.filter((c) => c.id.startsWith(slashQuery.toLowerCase()))
+  const runSlash = (cmd: (typeof SLASH_COMMANDS)[number]): void => {
+    setText('')
+    if (ref.current) ref.current.style.height = 'auto'
+    cmd.run()
+  }
+
   const resize = (): void => {
     const el = ref.current
     if (el) {
@@ -450,8 +512,45 @@ function Composer(): JSX.Element {
       : files.filter((f) => f.toLowerCase().includes(atQuery.toLowerCase())).slice(0, 8)
 
   return (
-    <div className="border-t border-line bg-paper p-3">
+    <div
+      className="border-t border-line bg-paper p-3"
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={(e) => {
+        e.preventDefault()
+        const dropped = Array.from(e.dataTransfer.files)
+        addImagesFromFiles(dropped) // 图片 → 缩略图附件
+        // 非图片文件：读入文本作为附件插入（上限 100k）
+        for (const f of dropped) {
+          if (f.type.startsWith('image/') || f.size > 5 * 1024 * 1024) continue
+          const reader = new FileReader()
+          reader.onload = () => {
+            if (typeof reader.result !== 'string') return
+            const content =
+              reader.result.length > 100_000
+                ? `${reader.result.slice(0, 100_000)}\n…（已截断）`
+                : reader.result
+            setText((t) => `${t}\n\n[附加文件：${f.name}]\n\`\`\`\n${content}\n\`\`\`\n`)
+            resize()
+          }
+          reader.readAsText(f)
+        }
+      }}
+    >
       <div className="relative mx-auto max-w-3xl">
+        {slashMatches.length > 0 && (
+          <div className="absolute bottom-full left-0 mb-1 w-full overflow-hidden rounded-lg border border-line bg-surface py-1 shadow-lg">
+            {slashMatches.map((c) => (
+              <button
+                key={c.id}
+                onClick={() => runSlash(c)}
+                className="flex w-full items-baseline gap-3 px-3 py-1.5 text-left text-xs hover:bg-surface-2"
+              >
+                <span className="font-mono font-semibold text-accent">{c.label}</span>
+                <span className="text-muted">{c.desc}</span>
+              </button>
+            ))}
+          </div>
+        )}
         {matches.length > 0 && (
           <div className="absolute bottom-full left-0 mb-1 max-h-56 w-full overflow-auto rounded-lg border border-line bg-surface py-1 shadow-lg">
             {matches.map((f) => (
@@ -521,6 +620,18 @@ function Composer(): JSX.Element {
               if (e.key === 'Escape' && atQuery !== null) {
                 setAtQuery(null)
                 return
+              }
+              // 斜杠命令：Enter 执行第一条匹配，Esc 清空关闭
+              if (slashMatches.length > 0) {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault()
+                  runSlash(slashMatches[0])
+                  return
+                }
+                if (e.key === 'Escape') {
+                  setText('')
+                  return
+                }
               }
               if (e.key === 'Enter' && atQuery === null) {
                 const mode = useStore.getState().settings?.submitKey ?? 'enter'

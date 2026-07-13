@@ -295,6 +295,10 @@ export interface Api {
   readImage(ref: string): Promise<string>
   regenerate(conversationId: string): Promise<void>
   truncateFrom(conversationId: string, messageId: string): Promise<void>
+  /** 把较早历史压缩成摘要（/compact），返回更新后的完整会话 */
+  compactConversation(
+    conversationId: string
+  ): Promise<{ ok: boolean; conversation?: Conversation; error?: string }>
   exportConversation(conversationId: string): Promise<void>
   listFiles(workspaceDir: string): Promise<string[]>
   abort(conversationId: string): Promise<void>

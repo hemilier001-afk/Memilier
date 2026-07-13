@@ -57,7 +57,8 @@ import { mcpManager } from './mcp/manager'
 import { pluginManager } from './plugins/manager'
 import { skillManager } from './skills/manager'
 import { memory } from './memory'
-import { listAllModels, resolveProvider } from './providers/registry'
+import { randomUUID } from 'node:crypto'
+import { bareModel, listAllModels, resolveProvider } from './providers/registry'
 import { routineManager } from './routines/manager'
 import { resolveInWorkspace } from './security'
 import { store } from './store'
@@ -496,4 +497,58 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
       store.trimToLastUser(conversationId)
     )
   )
+
+  // /compact：把较早的对话历史压缩成摘要，只保留最近几条 + 摘要，腾出上下文窗口
+  ipcMain.handle('conversations:compact', async (_e, id: string) => {
+    if (running.get(id)) return { ok: false, error: '正在生成中，请先停止再压缩' }
+    const conv = store.getConversation(id)
+    if (!conv) return { ok: false, error: '对话不存在' }
+    const KEEP = 4 // 保留最近 4 条原文
+    if (conv.messages.length <= KEEP + 2) return { ok: false, error: '对话还很短，暂不需要压缩' }
+    const settings = store.getSettings()
+    const modelId = conv.model || settings.defaultModel
+    if (!bareModel(modelId)) return { ok: false, error: '尚未选择模型' }
+    const provider = resolveProvider(modelId, settings)
+
+    const old = conv.messages.slice(0, -KEEP)
+    const kept = conv.messages.slice(-KEEP)
+    while (kept.length && kept[0].role === 'tool') kept.shift() // 保住工具配对
+    const transcript = old
+      .filter((m) => m.content)
+      .map((m) => {
+        const role = m.role === 'user' ? '用户' : m.role === 'assistant' ? '助手' : '工具结果'
+        return `【${role}】${m.content.slice(0, 2000)}`
+      })
+      .join('\n')
+      .slice(0, 40_000)
+
+    try {
+      const { content } = await provider.chat({
+        model: bareModel(modelId),
+        messages: [
+          {
+            id: 's',
+            role: 'system',
+            content:
+              '你是对话压缩器。把给定的对话历史压缩成一份简洁但信息完整的中文摘要，保留：用户的目标与关键要求、已完成的事项与结论、重要决定、未解决的问题、涉及的文件/路径/命令等关键细节。用要点列出，不要添加评论。',
+            createdAt: 0
+          },
+          { id: 'u', role: 'user', content: transcript, createdAt: 0 }
+        ]
+      })
+      const summaryMsg = {
+        id: randomUUID(),
+        role: 'assistant' as const,
+        content: `📜 **对话已压缩**（此前 ${old.length} 条消息的摘要）：\n\n${content}`,
+        createdAt: Date.now()
+      }
+      conv.messages = [summaryMsg, ...kept]
+      conv.updatedAt = Date.now()
+      store.saveConversation(conv)
+      store.flush()
+      return { ok: true, conversation: conv }
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  })
 }
