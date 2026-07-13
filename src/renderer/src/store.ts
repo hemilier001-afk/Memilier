@@ -433,14 +433,16 @@ export const useStore = create<UIState>((set, get) => ({
       activeProjectId: null,
       rightPanelOpen: view !== 'chat',
       rightTab: 'files',
-      active: next ?? null,
-      streaming: next ? get().runningIds.includes(next.id) : false,
-      streamingText: next ? (streamTexts.get(next.id) ?? '') : '',
-      plan: next?.plan ?? [],
+      active: null,
+      streaming: false,
+      streamingText: '',
+      plan: [],
       diffs: [],
       terminalOutput: '',
       terminalRunning: false
     })
+    // 列表是轻量摘要（不含 messages），需按 id 拉取完整会话
+    if (next) void get().selectConversation(next.id)
   },
 
   toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),

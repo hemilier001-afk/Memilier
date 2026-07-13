@@ -1,9 +1,10 @@
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { app, BrowserWindow, nativeImage, session, shell } from 'electron'
+import { app, BrowserWindow, nativeImage, screen, session, shell } from 'electron'
 import { registerIpc } from './ipc'
 import { setupAppMenu } from './menu'
 import { mcpManager } from './mcp/manager'
+import { store } from './store'
 
 // 主进程日志写文件 + 捕获未处理异常，便于排障（userData/main.log）
 function setupLogging(): void {
@@ -86,7 +87,19 @@ function windowStatePath(): string {
 function readWindowState(): { width: number; height: number; x?: number; y?: number } {
   try {
     const s = JSON.parse(readFileSync(windowStatePath(), 'utf8'))
-    if (s && typeof s.width === 'number' && typeof s.height === 'number') return s
+    if (s && typeof s.width === 'number' && typeof s.height === 'number') {
+      // 显示器可能已变更（拔掉外接屏等）：记忆的位置若不与任何屏幕相交，丢弃坐标居中显示
+      if (typeof s.x === 'number' && typeof s.y === 'number') {
+        const visible = screen.getAllDisplays().some((d) => {
+          const a = d.workArea
+          return (
+            s.x < a.x + a.width && s.x + s.width > a.x && s.y < a.y + a.height && s.y + 40 > a.y
+          )
+        })
+        if (!visible) return { width: s.width, height: s.height }
+      }
+      return s
+    }
   } catch {
     /* 无记录则用默认 */
   }
@@ -195,5 +208,6 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
+  store.flush() // 把防抖中的对话立即落盘
   void mcpManager.closeAll()
 })

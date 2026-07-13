@@ -1,14 +1,15 @@
 import { type ChildProcess, execFile, spawn } from 'node:child_process'
 import { existsSync, statSync, promises as fsp } from 'node:fs'
 import { basename, dirname } from 'node:path'
-import { BrowserWindow, clipboard, dialog, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from 'electron'
 import type {
   AgentEvent,
   FsEntry,
   GitFile,
   GitStatus,
   MemoryType,
-  PermissionRequest
+  PermissionRequest,
+  Settings
 } from '@shared/types'
 
 /** 在工作区跑一条 git 命令（core.quotepath=false：中文等非 ASCII 文件名按原样输出，不做八进制转义） */
@@ -77,10 +78,33 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
 
   ipcMain.handle('ollama:listModels', () => listAllModels(store.getSettings()))
 
-  ipcMain.handle('settings:get', () => store.getSettings())
-  ipcMain.handle('settings:set', (_e, patch) => store.setSettings(patch))
+  // API Key 不出主进程：发给渲染端时统一掩码；渲染端回传掩码时还原为已存的真实 Key。
+  // 这样即使渲染进程被攻破也拿不到明文密钥（safeStorage 只保护落盘，这里保护运行时）。
+  const KEY_MASK = '••••••••'
+  const maskSettings = (s: Settings): Settings => ({
+    ...s,
+    providers: (s.providers ?? []).map((p) => ({ ...p, apiKey: p.apiKey ? KEY_MASK : '' }))
+  })
+  ipcMain.handle('settings:get', () => maskSettings(store.getSettings()))
+  ipcMain.handle('settings:set', (_e, patch: Partial<Settings>) => {
+    if (patch.providers) {
+      const current = store.getSettings().providers ?? []
+      patch = {
+        ...patch,
+        providers: patch.providers.map((p) =>
+          p.apiKey === KEY_MASK
+            ? { ...p, apiKey: current.find((c) => c.id === p.id)?.apiKey ?? '' }
+            : p
+        )
+      }
+    }
+    return maskSettings(store.setSettings(patch))
+  })
 
-  ipcMain.handle('conversations:list', () => store.listConversations())
+  // 列表只回轻量摘要（不带 messages）：侧栏只需标题/时间等，避免整库消息反复过 IPC
+  ipcMain.handle('conversations:list', () =>
+    store.listConversations().map((c) => ({ ...c, messages: [] }))
+  )
   ipcMain.handle('conversations:get', (_e, id: string) => store.getConversation(id))
   ipcMain.handle(
     'conversations:create',
@@ -343,6 +367,25 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
 
   // ——— 终端：在工作区内执行命令并把输出流式推回渲染进程 ———
   const termProcs = new Map<string, ChildProcess>()
+  // 杀整个进程组（POSIX detached）/ 进程树（Windows taskkill /T），不留管道残余
+  const killTerm = (conversationId: string): void => {
+    const child = termProcs.get(conversationId)
+    termProcs.delete(conversationId)
+    if (!child || child.killed || child.pid == null) return
+    try {
+      if (process.platform === 'win32') {
+        spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'])
+      } else {
+        process.kill(-child.pid, 'SIGTERM')
+      }
+    } catch {
+      try {
+        child.kill()
+      } catch {
+        /* 忽略 */
+      }
+    }
+  }
   ipcMain.handle(
     'terminal:run',
     (_e, conversationId: string, workspaceDir: string, command: string) => {
@@ -355,11 +398,12 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
         })
         return
       }
-      termProcs.get(conversationId)?.kill()
+      killTerm(conversationId)
       const isWin = process.platform === 'win32'
       const child = spawn(command, {
         cwd: workspaceDir,
-        shell: isWin ? true : '/bin/sh'
+        shell: isWin ? true : '/bin/sh',
+        detached: !isWin // POSIX：独立进程组，kill 时能连管道/子进程一起杀
       })
       termProcs.set(conversationId, child)
       const emit = (type: 'out' | 'err' | 'exit', data?: string, code?: number | null): void =>
@@ -374,8 +418,11 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     }
   )
   ipcMain.handle('terminal:kill', (_e, conversationId: string) => {
-    termProcs.get(conversationId)?.kill()
-    termProcs.delete(conversationId)
+    killTerm(conversationId)
+  })
+  // 应用退出时清掉所有仍在跑的终端进程（不留孤儿）
+  app.on('before-quit', () => {
+    for (const id of [...termProcs.keys()]) killTerm(id)
   })
 
   // ——— 例程 / 后台任务 ———
@@ -390,6 +437,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     routineManager.run(id, emitAgent, emitTasks)
   )
   ipcMain.handle('tasks:list', () => routineManager.listTasks())
+  ipcMain.handle('tasks:cancel', (_e, taskId: string) => routineManager.cancelTask(taskId))
 
   routineManager.startScheduler(emitAgent, emitTasks)
 

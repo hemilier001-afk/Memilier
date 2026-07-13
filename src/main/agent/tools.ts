@@ -340,7 +340,27 @@ const fetchUrl: Tool = {
     const res = await safeFetch(url)
     if (!res.ok) throw new Error(`请求失败 (${res.status})`)
     const ct = res.headers.get('content-type') ?? ''
-    const raw = await res.text()
+    // 流式读取并设 2MB 硬上限：防止超大/无限响应把主进程内存撑爆
+    const MAX_BODY = 2 * 1024 * 1024
+    let raw = ''
+    if (res.body) {
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let bytes = 0
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        bytes += value.byteLength
+        raw += decoder.decode(value, { stream: true })
+        if (bytes >= MAX_BODY) {
+          void reader.cancel().catch(() => {})
+          raw += '\n…（响应过大，已截断到 2MB）'
+          break
+        }
+      }
+    } else {
+      raw = await res.text()
+    }
     const text = /html/i.test(ct)
       ? raw
           .replace(/<script[\s\S]*?<\/script>/gi, '')

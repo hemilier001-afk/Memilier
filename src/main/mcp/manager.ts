@@ -85,7 +85,8 @@ class McpManager {
   /** 连接所有启用的 server 并返回合并后的工具定义 */
   async listToolDefs(servers: Record<string, McpServerConfig>): Promise<ToolDef[]> {
     const defs: ToolDef[] = []
-    this.routes.clear()
+    // 先在新表里构建，最后整表交换——重建期间其它在跑的会话不会看到空路由表
+    const newRoutes = new Map<string, { server: string; tool: string }>()
     for (const [name, cfg] of Object.entries(servers ?? {})) {
       if (cfg.enabled === false) continue
       const conn = await this.ensure(name, cfg)
@@ -94,7 +95,7 @@ class McpManager {
         const { tools } = await conn.client.listTools()
         for (const t of tools) {
           const fq = `${PREFIX}${name}__${t.name}`
-          this.routes.set(fq, { server: name, tool: t.name })
+          newRoutes.set(fq, { server: name, tool: t.name })
           defs.push({
             name: fq,
             description: t.description ?? '',
@@ -109,6 +110,7 @@ class McpManager {
         await this.drop(name) // 连接可能已死，丢弃以便下次重连
       }
     }
+    this.routes = newRoutes // 原子交换
     return defs
   }
 

@@ -70,6 +70,7 @@ const api: Api = {
   deleteRoutine: (id) => ipcRenderer.invoke('routines:delete', id),
   runRoutineNow: (id) => ipcRenderer.invoke('routines:runNow', id),
   listTasks: () => ipcRenderer.invoke('tasks:list'),
+  cancelTask: (taskId) => ipcRenderer.invoke('tasks:cancel', taskId),
 
   onAgentEvent: (cb) => {
     const listener = (_e: unknown, payload: Parameters<typeof cb>[0]): void => cb(payload)

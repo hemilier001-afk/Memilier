@@ -16,7 +16,10 @@ let loaded = false
 let filePath = ''
 let routines: Record<string, Routine> = {}
 const tasks: BackgroundTask[] = []
+const MAX_TASKS = 100 // 任务列表只留最近 N 条，防止长时间运行无限增长
 const running = new Set<string>() // 正在运行的 routineId，防止重叠
+const taskAborters = new Map<string, AbortController>() // 按任务 id 可中止
+const RUN_CAP_MS = 30 * 60_000 // 单次例程运行的墙钟上限，防失控
 
 function ensure(): void {
   if (loaded) return
@@ -76,6 +79,11 @@ export const routineManager = {
     return tasks
   },
 
+  /** 中止一个正在运行的后台任务（按任务 id） */
+  cancelTask(taskId: string): void {
+    taskAborters.get(taskId)?.abort()
+  },
+
   /** 立即运行一个例程（也用于到点触发） */
   async run(id: string, emitAgent: EmitAgent, emitTasks: EmitTasks): Promise<void> {
     ensure()
@@ -106,6 +114,7 @@ export const routineManager = {
       startedAt: Date.now()
     }
     tasks.unshift(task)
+    if (tasks.length > MAX_TASKS) tasks.length = MAX_TASKS
     emitTasks(tasks)
 
     const settings = store.getSettings()
@@ -113,8 +122,13 @@ export const routineManager = {
     const permission = new PermissionManager(
       () => {},
       () => settings,
-      true // 后台自动放行
+      true // 后台自动放行（危险命令仍会被拒绝，见 PermissionManager）
     )
+
+    // 可中止 + 墙钟上限：失控的例程不再只能等它跑完
+    const ac = new AbortController()
+    taskAborters.set(task.id, ac)
+    const capTimer = setTimeout(() => ac.abort(), RUN_CAP_MS)
 
     try {
       await runAgent({
@@ -122,14 +136,21 @@ export const routineManager = {
         userContent: r.prompt,
         provider,
         permission,
-        signal: new AbortController().signal,
+        signal: ac.signal,
         send: (event) => emitAgent(conv.id, event)
       })
-      task.status = 'done'
+      if (ac.signal.aborted) {
+        task.status = 'error'
+        task.error = '已停止（手动取消或超过 30 分钟上限）'
+      } else {
+        task.status = 'done'
+      }
     } catch (e) {
       task.status = 'error'
       task.error = e instanceof Error ? e.message : String(e)
     } finally {
+      clearTimeout(capTimer)
+      taskAborters.delete(task.id)
       // 收尾隔离 worktree：提交改动到隔离分支并移除 worktree，把对话工作区还原回真实仓库
       if (wt) {
         const res = finalizeWorktree(wt)

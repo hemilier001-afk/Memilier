@@ -333,6 +333,8 @@ export interface Api {
   deleteRoutine(id: string): Promise<void>
   runRoutineNow(id: string): Promise<void>
   listTasks(): Promise<BackgroundTask[]>
+  /** 中止一个正在运行的后台任务 */
+  cancelTask(taskId: string): Promise<void>
   onAgentEvent(cb: (payload: { conversationId: string; event: AgentEvent }) => void): () => void
   onPermissionRequest(cb: (req: PermissionRequest) => void): () => void
   onTerminalEvent(cb: (e: TerminalEvent) => void): () => void

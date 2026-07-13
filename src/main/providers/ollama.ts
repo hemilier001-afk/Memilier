@@ -69,8 +69,9 @@ export class OllamaProvider implements ModelProvider {
       model: opts.model,
       messages: toOllamaMessages(opts.messages),
       stream: true,
-      // Ollama 默认 num_ctx 仅 2048，会截断系统提示+工具定义导致模型"看不到"工具；调大
-      options: { num_ctx: 8192 },
+      // Ollama 默认 num_ctx 仅 2048，会截断系统提示+工具定义导致模型"看不到"工具；
+      // 调到 16k 与主进程 ~48k 字符的历史裁剪预算量级对齐（否则 Ollama 会先掐掉头部的系统提示）
+      options: { num_ctx: 16384 },
       tools: withTools
         ? opts.tools?.map((t) => ({
             type: 'function',

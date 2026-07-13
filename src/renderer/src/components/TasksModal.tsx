@@ -48,6 +48,17 @@ export function TasksModal(): JSX.Element | null {
                     </div>
                   </div>
                   <span className={`ml-2 shrink-0 text-xs ${s.cls}`}>{s.label}</span>
+                  {t.status === 'running' && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        void window.api.cancelTask(t.id)
+                      }}
+                      className="ml-2 shrink-0 rounded-md border border-line px-2 py-0.5 text-xs text-muted transition hover:text-red-500"
+                    >
+                      停止
+                    </button>
+                  )}
                 </li>
               )
             })}

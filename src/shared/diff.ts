@@ -5,12 +5,23 @@ export interface DiffLine {
   text: string
 }
 
+// LCS 表规模上限：超出则退化为「整删整增」概要，避免大文件把渲染进程算到冻结/OOM
+const MAX_LCS_CELLS = 4_000_000
+
 /** 基于最长公共子序列计算逐行差异 */
 export function lineDiff(before: string, after: string): DiffLine[] {
   const a = before.length ? before.split('\n') : []
   const b = after.length ? after.split('\n') : []
   const m = a.length
   const n = b.length
+
+  if ((m + 1) * (n + 1) > MAX_LCS_CELLS) {
+    return [
+      { type: 'ctx', text: `（文件过大，略过逐行对比：-${m} 行 → +${n} 行）` },
+      { type: 'del', text: `原文件 ${m} 行` },
+      { type: 'add', text: `新文件 ${n} 行` }
+    ]
+  }
 
   // LCS 长度表
   const lcs: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0))

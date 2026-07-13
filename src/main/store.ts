@@ -45,6 +45,7 @@ function withDecryptedKeys(s: Settings): Settings {
 }
 
 let loaded = false
+let convSaveTimer: ReturnType<typeof setTimeout> | null = null
 let settingsPath = ''
 let convPath = ''
 let projectsPath = ''
@@ -175,7 +176,21 @@ export const store = {
   saveConversation(c: Conversation): void {
     ensure()
     conversations[c.id] = c
-    writeJSON(convPath, conversations)
+    // 防抖合并写：agent 循环里每条消息/每批工具结果都会保存，整库同步重写代价大。
+    // 300ms 内的多次保存合并为一次；退出前由 flush() 兜底落盘。
+    if (convSaveTimer) return
+    convSaveTimer = setTimeout(() => {
+      convSaveTimer = null
+      writeJSON(convPath, conversations)
+    }, 300)
+  },
+  /** 把防抖中的对话立即落盘（应用退出前调用） */
+  flush(): void {
+    if (convSaveTimer) {
+      clearTimeout(convSaveTimer)
+      convSaveTimer = null
+      writeJSON(convPath, conversations)
+    }
   },
   createConversation(kind: ConversationKind = 'chat', projectId?: string): Conversation {
     ensure()

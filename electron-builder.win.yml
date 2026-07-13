@@ -1,4 +1,4 @@
-appId: com.example.hemilier-desktop-agent
+appId: com.hemilier.desktop
 productName: Hemilier
 # 不设置 electronDist：让 electron-builder 自行下载 Windows 版 Electron 二进制
 directories:
