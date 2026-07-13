@@ -20,6 +20,8 @@ interface Connected {
 class McpManager {
   private clients = new Map<string, Connected>()
   private routes = new Map<string, { server: string; tool: string }>()
+  /** 正在建立中的连接（并行场景下对同一 server 去重，避免重复 spawn/握手） */
+  private connecting = new Map<string, Promise<Connected | null>>()
 
   private sig(cfg: McpServerConfig): string {
     return JSON.stringify([cfg.command, cfg.args ?? [], cfg.env ?? {}, cfg.url, cfg.type])
@@ -62,6 +64,19 @@ class McpManager {
       if (existing.sig === sig) return existing
       await this.drop(name) // 配置变了 → 重连，无需重启 APP
     }
+    // 同一 server 的连接去重：并行调用（如发送与「测试连接」同时触发）共用同一次握手
+    const inflight = this.connecting.get(name)
+    if (inflight) return inflight
+    const p = this.connect(name, cfg, sig).finally(() => this.connecting.delete(name))
+    this.connecting.set(name, p)
+    return p
+  }
+
+  private async connect(
+    name: string,
+    cfg: McpServerConfig,
+    sig: string
+  ): Promise<Connected | null> {
     try {
       const transport = this.makeTransport(cfg)
       const client = new Client(
@@ -82,67 +97,69 @@ class McpManager {
     }
   }
 
-  /** 连接所有启用的 server 并返回合并后的工具定义 */
+  /** 连接所有启用的 server 并返回合并后的工具定义（多 server **并行**连接，单个失败只影响自己） */
   async listToolDefs(servers: Record<string, McpServerConfig>): Promise<ToolDef[]> {
-    const defs: ToolDef[] = []
-    // 先在新表里构建，最后整表交换——重建期间其它在跑的会话不会看到空路由表
-    const newRoutes = new Map<string, { server: string; tool: string }>()
-    for (const [name, cfg] of Object.entries(servers ?? {})) {
-      if (cfg.enabled === false) continue
-      const conn = await this.ensure(name, cfg)
-      if (!conn) continue
-      try {
-        const { tools } = await conn.client.listTools()
-        for (const t of tools) {
-          const fq = `${PREFIX}${name}__${t.name}`
-          newRoutes.set(fq, { server: name, tool: t.name })
-          defs.push({
-            name: fq,
-            description: t.description ?? '',
-            parameters: (t.inputSchema as Record<string, unknown>) ?? {
-              type: 'object',
-              properties: {}
-            }
-          })
+    const entries = Object.entries(servers ?? {}).filter(([, cfg]) => cfg.enabled !== false)
+    const perServer = await Promise.all(
+      entries.map(async ([name, cfg]) => {
+        const conn = await this.ensure(name, cfg)
+        if (!conn) return { name, tools: [] as Awaited<ReturnType<Client['listTools']>>['tools'] }
+        try {
+          const { tools } = await conn.client.listTools()
+          return { name, tools }
+        } catch (e) {
+          console.error(`[mcp] 列出 server "${name}" 的工具失败：`, e)
+          await this.drop(name) // 连接可能已死，丢弃以便下次重连
+          return { name, tools: [] as Awaited<ReturnType<Client['listTools']>>['tools'] }
         }
-      } catch (e) {
-        console.error(`[mcp] 列出 server "${name}" 的工具失败：`, e)
-        await this.drop(name) // 连接可能已死，丢弃以便下次重连
+      })
+    )
+    // 先在新表里构建，最后整表交换——重建期间其它在跑的会话不会看到空路由表
+    const defs: ToolDef[] = []
+    const newRoutes = new Map<string, { server: string; tool: string }>()
+    for (const { name, tools } of perServer) {
+      for (const t of tools) {
+        const fq = `${PREFIX}${name}__${t.name}`
+        newRoutes.set(fq, { server: name, tool: t.name })
+        defs.push({
+          name: fq,
+          description: t.description ?? '',
+          parameters: (t.inputSchema as Record<string, unknown>) ?? {
+            type: 'object',
+            properties: {}
+          }
+        })
       }
     }
     this.routes = newRoutes // 原子交换
     return defs
   }
 
-  /** 探测各 server 的连通性，供设置面板「测试连接」展示 */
+  /** 探测各 server 的连通性，供设置面板「测试连接」展示（并行探测，结果按配置顺序返回） */
   async status(
     servers: Record<string, McpServerConfig>
   ): Promise<{ name: string; ok: boolean; toolCount: number; error?: string }[]> {
-    const out: { name: string; ok: boolean; toolCount: number; error?: string }[] = []
-    for (const [name, cfg] of Object.entries(servers ?? {})) {
-      if (cfg.enabled === false) {
-        out.push({ name, ok: false, toolCount: 0, error: '已禁用' })
-        continue
-      }
-      const conn = await this.ensure(name, cfg)
-      if (!conn) {
-        out.push({ name, ok: false, toolCount: 0, error: '连接失败（命令/路径是否正确？）' })
-        continue
-      }
-      try {
-        const { tools } = await conn.client.listTools()
-        out.push({ name, ok: true, toolCount: tools.length })
-      } catch (e) {
-        await this.drop(name)
-        out.push({
-          name,
-          ok: false,
-          toolCount: 0,
-          error: e instanceof Error ? e.message : String(e)
-        })
-      }
-    }
-    return out
+    return Promise.all(
+      Object.entries(servers ?? {}).map(async ([name, cfg]) => {
+        if (cfg.enabled === false) return { name, ok: false, toolCount: 0, error: '已禁用' }
+        const conn = await this.ensure(name, cfg)
+        if (!conn) {
+          return { name, ok: false, toolCount: 0, error: '连接失败（命令/路径是否正确？）' }
+        }
+        try {
+          const { tools } = await conn.client.listTools()
+          return { name, ok: true, toolCount: tools.length }
+        } catch (e) {
+          await this.drop(name)
+          return {
+            name,
+            ok: false,
+            toolCount: 0,
+            error: e instanceof Error ? e.message : String(e)
+          }
+        }
+      })
+    )
   }
 
   isMcpTool(name: string): boolean {
