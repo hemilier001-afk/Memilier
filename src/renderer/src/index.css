@@ -129,22 +129,23 @@ body {
   color: var(--accent-hover);
 }
 
-/* 代码块卡片（Claude 风格）：统一深色卡片 + 头部栏（语言 + 复制），
-   浅/深主题都用同一深色底，压掉 highlight.js 主题自带的 #0d1117 背景避免“黑块嵌浅框” */
+/* 代码块卡片：浅色卡片 + 头部栏（语言 + 复制）。
+   配 highlight.js 的 github（浅色）主题；固定浅底，深色主题下也是浅色卡片（不出现深黑块） */
 .code-block {
   margin: 0.8em 0;
   border-radius: 10px;
   overflow: hidden;
-  border: 1px solid #33343a;
-  background: #1b1c20;
+  border: 1px solid #e6e6ea;
+  background: #fdfdfd;
 }
 .code-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 5px 12px;
-  background: #26272c;
-  color: #9a9aa3;
+  background: #f4f4f6;
+  border-bottom: 1px solid #e6e6ea;
+  color: #6e6e78;
   font-size: 11px;
   font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   user-select: none;

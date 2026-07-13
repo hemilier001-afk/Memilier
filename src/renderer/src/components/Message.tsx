@@ -91,7 +91,7 @@ function Pre({ node: _node, children, ...props }: any): JSX.Element {
         <span>{lang || 'code'}</span>
         <CopyButton
           getText={() => ref.current?.innerText ?? ''}
-          className="rounded px-1.5 py-0.5 transition hover:bg-white/10 hover:text-white"
+          className="rounded px-1.5 py-0.5 transition hover:bg-black/10 hover:text-black"
         />
       </div>
       <pre ref={ref} {...props}>
