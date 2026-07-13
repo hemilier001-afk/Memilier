@@ -140,6 +140,22 @@ body {
   padding: 0.3em 0.6em;
 }
 
+/* 品牌圆环「呼吸」动画：模型生成回答时，头像里的圆圈周期性缩放 */
+@keyframes hemi-ring-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(0.68);
+  }
+}
+.ring-pulse {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: hemi-ring-pulse 1.15s ease-in-out infinite;
+}
+
 /* 无系统标题栏时的窗口拖动区域 */
 .region-drag {
   -webkit-app-region: drag;

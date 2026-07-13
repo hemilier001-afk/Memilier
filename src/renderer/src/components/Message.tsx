@@ -208,21 +208,28 @@ export function MessageView({
   )
 }
 
-function AssistantAvatar(): JSX.Element {
+function AssistantAvatar({ active = false }: { active?: boolean }): JSX.Element {
+  // 与 APP 图标同一份绘制（同比例、同色值），保证品牌一致；active 时圆环做「呼吸」缩放
   return (
-    <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] bg-accent">
-      {/* 与 APP 图标一致的奶白圆环 */}
-      <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden="true">
-        <circle cx="12" cy="12" r="7" fill="none" stroke="#FBF3EA" strokeWidth="3.6" />
-      </svg>
-    </div>
+    <svg viewBox="0 0 100 100" className="mt-0.5 h-7 w-7 shrink-0" aria-hidden="true">
+      <rect x="6" y="6" width="88" height="88" rx="22" fill="#d2552c" />
+      <circle
+        className={active ? 'ring-pulse' : undefined}
+        cx="50"
+        cy="50"
+        r="29"
+        fill="none"
+        stroke="#fbf3ea"
+        strokeWidth="12"
+      />
+    </svg>
   )
 }
 
 export function StreamingBubble({ text }: { text: string }): JSX.Element {
   return (
     <div className="flex gap-3">
-      <AssistantAvatar />
+      <AssistantAvatar active />
       <div className="min-w-0 flex-1">
         <div className="mb-1 text-xs font-semibold text-muted">hemilier</div>
         {text ? (
