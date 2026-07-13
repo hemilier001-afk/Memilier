@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { promises as fs } from 'node:fs'
+import path from 'node:path'
 import type { AgentEvent, Message, ToolCall } from '@shared/types'
 import type { ModelProvider } from '../providers/types'
 import { imageStore } from '../images'
@@ -92,11 +93,33 @@ async function listWorkspaceTop(workspace: string): Promise<string> {
   }
 }
 
+// 项目指令文件（AGENTS.md 约定）：放在工作区根目录、随项目走、可进版本库。
+// 依次探测 AGENTS.md / .hemilier/instructions.md，取第一个存在的，注入系统提示。
+const INSTRUCTION_FILES = ['AGENTS.md', path.join('.hemilier', 'instructions.md')]
+const MAX_INSTRUCTIONS_CHARS = 4000
+
+async function loadProjectInstructions(workspace: string): Promise<string> {
+  for (const rel of INSTRUCTION_FILES) {
+    try {
+      const raw = await fs.readFile(path.join(workspace, rel), 'utf8')
+      const text = raw.trim()
+      if (!text) continue
+      return text.length > MAX_INSTRUCTIONS_CHARS
+        ? `${text.slice(0, MAX_INSTRUCTIONS_CHARS)}\n…（${rel} 过长已截断）`
+        : text
+    } catch {
+      /* 不存在则试下一个 */
+    }
+  }
+  return ''
+}
+
 function buildSystemPrompt(
   workspace: string,
   skills: SkillMeta[],
   wsListing: string,
-  memory: string
+  memory: string,
+  projectInstructions: string
 ): string {
   const os =
     process.platform === 'win32' ? 'Windows' : process.platform === 'darwin' ? 'macOS' : 'Linux'
@@ -127,6 +150,13 @@ function buildSystemPrompt(
     '- 当某类任务的做法已稳定、未来可能重复时，用 save_skill 把流程沉淀成技能，以后可 load_skill 复用。',
     '- 使用 Markdown 回复。'
   ]
+  if (projectInstructions) {
+    lines.push(
+      '',
+      '项目指令（来自工作区的 AGENTS.md / .hemilier/instructions.md，随项目维护，请遵循；若与上面的核心要求或用户即时指令冲突，以后者为准）：',
+      projectInstructions
+    )
+  }
   if (memory.trim()) {
     lines.push(
       '',
@@ -227,15 +257,18 @@ export async function runAgent(opts: RunOptions): Promise<void> {
     chat: '\n\n【对话模式】仅进行对话，不调用任何工具。'
   }
 
-  const skills = await skillManager.listSkills(workspace, pluginSkillDirs)
-  const wsListing = await listWorkspaceTop(workspace)
-  const memory = await memoryStore.renderForPrompt(workspace)
+  const [skills, wsListing, memory, projectInstructions] = await Promise.all([
+    skillManager.listSkills(workspace, pluginSkillDirs),
+    listWorkspaceTop(workspace),
+    memoryStore.renderForPrompt(workspace),
+    loadProjectInstructions(workspace)
+  ])
   const custom = settings.customInstructions?.[conv.kind]?.trim()
   const system: Message = {
     id: 'system',
     role: 'system',
     content:
-      buildSystemPrompt(workspace, skills, wsListing, memory) +
+      buildSystemPrompt(workspace, skills, wsListing, memory, projectInstructions) +
       (custom ? `\n\n用户为当前空间设定的自定义指令（请遵循）：\n${custom}` : '') +
       MODE_HINT[mode],
     createdAt: 0

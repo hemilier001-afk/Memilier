@@ -42,9 +42,20 @@ export const memory = {
   ): Promise<MemoryEntry> {
     const entries = await this.list(workspace)
     const now = Date.now()
+    const trimmed = text.trim()
+    // 同文去重（upsert）：内容完全相同的条目刷新时间与类型，而不是堆一条重复记忆
+    const existing = entries.find((e) => e.text === trimmed)
+    if (existing) {
+      existing.type = type
+      existing.source = source ?? existing.source
+      existing.createdAt = now // 视为“再次确认”，重置过期计时
+      existing.updatedAt = now
+      await this.save(workspace, entries)
+      return existing
+    }
     const entry: MemoryEntry = {
       id: randomUUID(),
-      text: text.trim(),
+      text: trimmed,
       type,
       source,
       createdAt: now,
@@ -61,19 +72,33 @@ export const memory = {
     await this.save(workspace, entries)
   },
 
-  /** 渲染成注入系统提示的文本（含类型、时间、过期标记、来源、短 id） */
+  /** 渲染成注入系统提示的文本（含类型、时间、过期标记、来源、短 id）。
+   *  预算：最多 50 条 + ~4000 字符，**优先保留最新**（此前取的是最旧 50 条，新记忆反被丢弃）。 */
   async renderForPrompt(workspace: string): Promise<string> {
     const entries = await this.list(workspace)
     if (!entries.length) return ''
     const now = Date.now()
-    return entries
-      .slice(0, 50)
-      .map((e) => {
-        const d = new Date(e.createdAt).toLocaleDateString()
-        const stale = now - e.createdAt > STALE_MS ? ' ⚠较旧请核实' : ''
-        const src = e.source ? ` 来源:${e.source}` : ''
-        return `- [${TYPE_LABEL[e.type] ?? e.type}·${d}${stale}${src}] ${e.text} (id:${e.id.slice(0, 8)})`
-      })
-      .join('\n')
+    const MAX_CHARS = 4000
+    const lines: string[] = []
+    let total = 0
+    let dropped = 0
+    // 从最新往回收集，再按时间正序输出（阅读顺序自然）
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const e = entries[i]
+      const d = new Date(e.createdAt).toLocaleDateString()
+      const stale = now - e.createdAt > STALE_MS ? ' ⚠较旧请核实' : ''
+      const src = e.source ? ` 来源:${e.source}` : ''
+      const line = `- [${TYPE_LABEL[e.type] ?? e.type}·${d}${stale}${src}] ${e.text} (id:${e.id.slice(0, 8)})`
+      if (lines.length >= 50 || total + line.length > MAX_CHARS) {
+        dropped = i + 1
+        break
+      }
+      lines.push(line)
+      total += line.length
+    }
+    lines.reverse()
+    if (dropped > 0)
+      lines.push(`（另有 ${dropped} 条较早记忆未注入，可在右栏 Memory 面板查看/清理）`)
+    return lines.join('\n')
   }
 }
