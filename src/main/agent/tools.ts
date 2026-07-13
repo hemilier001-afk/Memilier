@@ -6,6 +6,7 @@ import path from 'node:path'
 import { z } from 'zod'
 import type { PlanStep, ToolDef } from '@shared/types'
 import { isDangerousCommand, isPrivateIp } from './safety'
+import { browserManager } from '../browser'
 import { resolveInWorkspace } from '../security'
 import { skillManager } from '../skills/manager'
 import { memory } from '../memory'
@@ -444,6 +445,101 @@ const webSearch: Tool = {
   }
 }
 
+// ——— 浏览器工具组：控制一个可视的受管浏览器窗口，用于测试/调试网页（含 localhost 开发服务器） ———
+
+const browserOpen: Tool = {
+  name: 'browser_open',
+  description:
+    '在受管浏览器窗口中打开/导航到一个 URL（支持 localhost 开发服务器）。用于查看正在开发的网页、验证改动效果。打开后可用 browser_snapshot 读页面、browser_console 看报错、browser_click/browser_fill 交互。',
+  sideEffect: 'exec', // 打开页面需授权（窗口可见，用户全程可见）
+  schema: z.object({ url: z.string() }),
+  parameters: {
+    type: 'object',
+    properties: {
+      url: { type: 'string', description: '完整 URL（http/https，可为 http://localhost:xxxx）' }
+    },
+    required: ['url']
+  },
+  async execute({ url }) {
+    const title = await browserManager.open(url)
+    return `已打开：${url}（标题：${title || '(无)'}）。可用 browser_snapshot 读取页面、browser_console 查看控制台。`
+  }
+}
+
+const browserSnapshot: Tool = {
+  name: 'browser_snapshot',
+  description: '读取受管浏览器当前页面：标题、URL、可见文本（截断）。用于确认页面渲染结果。',
+  sideEffect: 'none',
+  schema: z.object({}),
+  parameters: { type: 'object', properties: {} },
+  async execute() {
+    return browserManager.snapshot()
+  }
+}
+
+const browserConsole: Tool = {
+  name: 'browser_console',
+  description:
+    '读取受管浏览器最近的控制台输出（log/warn/error）。调试网页时先看这里——报错信息通常直接指向问题。',
+  sideEffect: 'none',
+  schema: z.object({}),
+  parameters: { type: 'object', properties: {} },
+  async execute() {
+    return browserManager.consoleLogs()
+  }
+}
+
+const browserClick: Tool = {
+  name: 'browser_click',
+  description: '在受管浏览器中按 CSS 选择器点击元素（如按钮、链接）。',
+  sideEffect: 'exec',
+  schema: z.object({ selector: z.string() }),
+  parameters: {
+    type: 'object',
+    properties: { selector: { type: 'string', description: 'CSS 选择器，如 #submit、.btn' } },
+    required: ['selector']
+  },
+  async execute({ selector }) {
+    return browserManager.click(selector)
+  }
+}
+
+const browserFill: Tool = {
+  name: 'browser_fill',
+  description:
+    '在受管浏览器中向输入框（input/textarea）填入文本，自动触发 input/change 事件（兼容 React 表单）。',
+  sideEffect: 'exec',
+  schema: z.object({ selector: z.string(), text: z.string() }),
+  parameters: {
+    type: 'object',
+    properties: {
+      selector: { type: 'string', description: '输入框的 CSS 选择器' },
+      text: { type: 'string', description: '要填入的文本' }
+    },
+    required: ['selector', 'text']
+  },
+  async execute({ selector, text }) {
+    return browserManager.fill(selector, text)
+  }
+}
+
+const browserScreenshot: Tool = {
+  name: 'browser_screenshot',
+  description:
+    '截图受管浏览器当前页面，保存为工作区 .hemilier/screenshots/ 下的 PNG 文件，返回相对路径（用户可打开查看）。',
+  sideEffect: 'write', // 往工作区写文件
+  schema: z.object({}),
+  parameters: { type: 'object', properties: {} },
+  async execute(_args, ctx) {
+    const png = await browserManager.screenshot()
+    const rel = path.join('.hemilier', 'screenshots', `shot-${Date.now()}.png`)
+    const abs = resolveInWorkspace(ctx.workspace, rel)
+    await fs.mkdir(path.dirname(abs), { recursive: true })
+    await fs.writeFile(abs, png)
+    return `已保存截图：${rel}（${(png.length / 1024).toFixed(0)} KB）`
+  }
+}
+
 const loadSkill: Tool = {
   name: 'load_skill',
   description:
@@ -615,6 +711,12 @@ const ALL: Tool[] = [
   runCommand,
   fetchUrl,
   webSearch,
+  browserOpen,
+  browserSnapshot,
+  browserConsole,
+  browserClick,
+  browserFill,
+  browserScreenshot,
   loadSkill,
   updatePlan,
   addMemory,
@@ -686,6 +788,9 @@ export function describeTool(tool: Tool, args: Record<string, unknown>): string 
   }
   if (tool.name === 'web_search') return `联网搜索：${String(args.query)}`
   if (tool.name === 'fetch_url') return `读取网页：${String(args.url)}`
+  if (tool.name === 'browser_open') return `浏览器打开：${String(args.url)}`
+  if (tool.name === 'browser_click') return `浏览器点击：${String(args.selector)}`
+  if (tool.name === 'browser_fill') return `浏览器填入：${String(args.selector)}`
   if (tool.name === 'add_memory') return `写入项目记忆：${String(args.text ?? '')}`
   if (tool.name === 'forget_memory') return `删除项目记忆：${String(args.id ?? '')}`
   if (tool.name === 'save_skill') return `沉淀技能：${String(args.name ?? '')}`
