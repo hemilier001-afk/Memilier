@@ -11,13 +11,14 @@ import type {
   PermissionRequest
 } from '@shared/types'
 
-/** 在工作区跑一条 git 命令 */
+/** 在工作区跑一条 git 命令（core.quotepath=false：中文等非 ASCII 文件名按原样输出，不做八进制转义） */
 function git(
   cwd: string,
   args: string[]
 ): Promise<{ code: number; stdout: string; stderr: string }> {
+  const fullArgs = ['-c', 'core.quotepath=false', ...args]
   return new Promise((resolve) => {
-    execFile('git', args, { cwd, maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) => {
+    execFile('git', fullArgs, { cwd, maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) => {
       const code =
         err && typeof (err as NodeJS.ErrnoException).code === 'number'
           ? ((err as unknown as { code: number }).code ?? 1)
@@ -71,6 +72,8 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   )
 
   const aborters = new Map<string, AbortController>()
+  // 每个会话正在进行的运行（声明在前，供 delete 等 handler 引用；赋值逻辑见下方 runConversation）
+  const running = new Map<string, Promise<void>>()
 
   ipcMain.handle('ollama:listModels', () => listAllModels(store.getSettings()))
 
@@ -93,7 +96,10 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   )
   ipcMain.handle('projects:rename', (_e, id: string, name: string) => store.renameProject(id, name))
   ipcMain.handle('projects:delete', (_e, id: string) => store.deleteProject(id))
-  ipcMain.handle('conversations:delete', (_e, id: string) => {
+  ipcMain.handle('conversations:delete', async (_e, id: string) => {
+    // 若该会话正在运行，先中止并等其收尾，避免在跑的循环把刚删的会话重新写回（“诈尸”）
+    aborters.get(id)?.abort()
+    await running.get(id)?.catch(() => {})
     store.deleteConversation(id)
     imageStore.deleteConversation(id) // 一并清理该会话的图片文件
   })
@@ -387,49 +393,59 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
 
   routineManager.startScheduler(emitAgent, emitTasks)
 
-  // 跟踪每个会话正在进行的运行，确保同一会话的运行严格串行（不并发改同一份 messages）
-  const running = new Map<string, Promise<void>>()
-  const runConversation = async (
+  // 同一会话的运行严格串行（不并发改同一份 messages）。
+  // 注意：新任务必须「同步」写入 running，否则两个并发调用会 await 同一个 prev 后并行执行。
+  const runConversation = (
     conversationId: string,
     userContent?: string,
-    images?: string[]
+    images?: string[],
+    userMessageId?: string,
+    /** 在上一轮真正结束后、本轮开始前执行（如「重新生成」的历史裁剪，避免与在跑的循环抢 messages） */
+    beforeRun?: () => void
   ): Promise<void> => {
     aborters.get(conversationId)?.abort()
-    // 等上一轮真正结束后再开始，避免两个 runAgent 同时修改同一个对话对象
     const prev = running.get(conversationId)
-    if (prev) await prev.catch(() => {})
-    const ac = new AbortController()
-    aborters.set(conversationId, ac)
-    const settings = store.getSettings()
-    const modelId = store.getConversation(conversationId)?.model || settings.defaultModel
-    const provider = resolveProvider(modelId, settings)
-    const task = (async () => {
+    const box: { task?: Promise<void> } = {} // 供 finally 里做身份比对（避免自引用的 TDZ）
+    const task: Promise<void> = (async () => {
+      // 等上一轮真正结束后再开始，避免两个 runAgent 同时修改同一个对话对象
+      if (prev) await prev.catch(() => {})
+      beforeRun?.()
+      const ac = new AbortController()
+      aborters.set(conversationId, ac)
+      const settings = store.getSettings()
+      const modelId = store.getConversation(conversationId)?.model || settings.defaultModel
+      const provider = resolveProvider(modelId, settings)
       try {
         await runAgent({
           conversationId,
           userContent,
           images,
+          userMessageId,
           provider,
           permission,
           signal: ac.signal,
           send: (event: AgentEvent) => sendToRenderer('agent:event', { conversationId, event })
         })
       } finally {
-        // 串行保证：旧任务的 finally 必在下一次 runConversation 注册新任务前执行完
         if (aborters.get(conversationId) === ac) aborters.delete(conversationId)
-        running.delete(conversationId)
+        if (running.get(conversationId) === box.task) running.delete(conversationId)
       }
     })()
+    box.task = task
     running.set(conversationId, task)
     return task
   }
 
-  ipcMain.handle('agent:send', (_e, conversationId: string, content: string, images?: string[]) =>
-    runConversation(conversationId, content, images)
+  ipcMain.handle(
+    'agent:send',
+    (_e, conversationId: string, content: string, images?: string[], userMessageId?: string) =>
+      runConversation(conversationId, content, images, userMessageId)
   )
 
-  ipcMain.handle('agent:regenerate', (_e, conversationId: string) => {
-    store.trimToLastUser(conversationId)
-    return runConversation(conversationId)
-  })
+  ipcMain.handle('agent:regenerate', (_e, conversationId: string) =>
+    // 历史裁剪放到上一轮结束后执行，避免与在跑的循环并发修改同一 messages 数组
+    runConversation(conversationId, undefined, undefined, undefined, () =>
+      store.trimToLastUser(conversationId)
+    )
+  )
 }

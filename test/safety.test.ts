@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { isDangerousCommand, isPrivateIp } from '../src/main/agent/safety'
-import { rememberKey } from '../src/main/agent/permission'
-import type { ToolCall } from '../src/shared/types'
+import { PermissionManager, rememberKey } from '../src/main/agent/permission'
+import type { Settings, ToolCall } from '../src/shared/types'
 
 describe('isDangerousCommand', () => {
   it('识别常见危险命令（含绕过变体）', () => {
@@ -82,5 +82,50 @@ describe('rememberKey', () => {
   it('MCP / 写工具按具体名', () => {
     expect(rememberKey(tc('mcp__fs__read'), 'exec')).toBe('tool:mcp__fs__read')
     expect(rememberKey(tc('write_file'), 'write')).toBe('tool:write_file')
+  })
+})
+
+describe('PermissionManager', () => {
+  const settings = { autoApproveReadOnly: true } as Settings
+  const tc: ToolCall = {
+    id: 't',
+    name: 'run_command',
+    args: { command: 'rm -rf /' },
+    status: 'pending'
+  }
+
+  it('无人值守(autoApproveAll)：普通操作放行，危险操作(forcePrompt)拒绝', async () => {
+    const pm = new PermissionManager(
+      () => {},
+      () => settings,
+      true
+    )
+    await expect(pm.request(tc, 'exec', 'x', false)).resolves.toBe(true)
+    await expect(pm.request(tc, 'exec', 'x', true)).resolves.toBe(false)
+  })
+
+  it('运行被中止时，挂起的授权请求自动按「拒绝」解决（不再永久卡死）', async () => {
+    const pm = new PermissionManager(
+      () => {},
+      () => settings
+    )
+    const ac = new AbortController()
+    const p = pm.request(tc, 'exec', 'x', false, ac.signal)
+    ac.abort()
+    await expect(p).resolves.toBe(false)
+  })
+
+  it('已中止的信号直接拒绝，不发起弹框', async () => {
+    let sent = 0
+    const pm = new PermissionManager(
+      () => {
+        sent++
+      },
+      () => settings
+    )
+    const ac = new AbortController()
+    ac.abort()
+    await expect(pm.request(tc, 'exec', 'x', false, ac.signal)).resolves.toBe(false)
+    expect(sent).toBe(0)
   })
 })

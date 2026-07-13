@@ -283,7 +283,13 @@ export interface Api {
   setConversationWorkspace(id: string, dir: string): Promise<void>
   pickFile(): Promise<{ name: string; content: string } | null>
   transcribeAudio(bytes: Uint8Array, mime: string): Promise<string>
-  sendMessage(conversationId: string, content: string, images?: string[]): Promise<void>
+  sendMessage(
+    conversationId: string,
+    content: string,
+    images?: string[],
+    /** 渲染端乐观消息的 id；主进程沿用它持久化，保证两端 id 一致 */
+    userMessageId?: string
+  ): Promise<void>
   pickImage(): Promise<{ name: string; dataUrl: string } | null>
   /** 把图片引用（himg:）还原成 data URL 供显示；非引用原样返回 */
   readImage(ref: string): Promise<string>

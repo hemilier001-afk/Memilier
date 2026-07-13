@@ -136,20 +136,23 @@ export const pluginManager = {
       return { ok: false, error: e instanceof Error ? e.message : '写入失败' }
     }
   },
-  /** 卸载插件（删除其目录） */
+  /** 卸载插件（删除其目录）。按扫描到的真实目录删（目录名可能≠插件名），并防路径越界 */
   uninstall(idOrName: string): void {
-    const state = readState()
-    // 目录名可能是 catalog id，也可能是手动安装时的文件夹名
-    for (const dirName of [idOrName]) {
-      const dir = path.join(pluginsDir(), dirName)
-      if (existsSync(dir)) {
-        try {
-          rmSync(dir, { recursive: true, force: true })
-        } catch {
-          /* 忽略 */
-        }
+    if (!idOrName || /[\\/]|\.\./.test(idOrName)) return
+    const base = pluginsDir()
+    // 优先按插件名匹配已扫描的真实目录（手动安装的文件夹名可能≠manifest.name）
+    const matched = readPlugins().find((p) => p.name === idOrName)?.dir
+    const dir = matched ?? path.join(base, idOrName)
+    const resolved = path.resolve(dir)
+    if (resolved === base || !resolved.startsWith(base + path.sep)) return
+    if (existsSync(resolved)) {
+      try {
+        rmSync(resolved, { recursive: true, force: true })
+      } catch {
+        /* 忽略 */
       }
     }
+    const state = readState()
     delete state[idOrName]
     writeState(state)
   },
@@ -163,8 +166,14 @@ export const pluginManager = {
     } catch {
       return { ok: false, error: 'plugin.json 解析失败（不是合法 JSON）' }
     }
-    const folder = manifest.name || path.basename(src)
-    const dest = path.join(pluginsDir(), folder)
+    // 清洗目录名：manifest.name 可能含 ../ 等路径成分，绝不能直接用作安装路径
+    const rawName = manifest.name || path.basename(src)
+    const folder = path.basename(rawName.replace(/[\\/]/g, '_')).replace(/^\.+/, '').trim()
+    if (!folder) return { ok: false, error: 'plugin.json 的 name 无效' }
+    const base = pluginsDir()
+    const dest = path.resolve(base, folder)
+    if (dest === base || !dest.startsWith(base + path.sep))
+      return { ok: false, error: 'plugin.json 的 name 无效' }
     if (existsSync(dest)) return { ok: false, error: `插件「${folder}」已存在` }
     try {
       cpSync(src, dest, { recursive: true })

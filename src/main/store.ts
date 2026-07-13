@@ -2,7 +2,14 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { app, safeStorage } from 'electron'
-import type { Conversation, ConversationKind, Project, Settings } from '@shared/types'
+import type { Conversation, ConversationKind, Message, Project, Settings } from '@shared/types'
+import { imageStore } from './images'
+
+// 被移除消息里引用的图片文件一并清理，避免孤儿文件在 userData/images 里越积越多
+function cleanupImages(removed: Message[]): void {
+  const refs = removed.flatMap((m) => m.images ?? []).filter((v) => imageStore.isRef(v))
+  if (refs.length) imageStore.deleteRefs(refs)
+}
 
 // API Key 等机密的本地加密（用系统钥匙串；不可用时退回明文）。落盘加密、内存明文。
 const ENC_PREFIX = 'safe:'
@@ -231,9 +238,11 @@ export const store = {
     ensure()
     const c = conversations[id]
     if (!c) return
+    const removed: Message[] = []
     while (c.messages.length && c.messages[c.messages.length - 1].role !== 'user') {
-      c.messages.pop()
+      removed.push(c.messages.pop()!)
     }
+    cleanupImages(removed)
     writeJSON(convPath, conversations)
   },
 
@@ -244,6 +253,7 @@ export const store = {
     if (!c) return
     const idx = c.messages.findIndex((m) => m.id === messageId)
     if (idx >= 0) {
+      cleanupImages(c.messages.slice(idx))
       c.messages = c.messages.slice(0, idx)
       writeJSON(convPath, conversations)
     }

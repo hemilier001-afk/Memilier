@@ -46,14 +46,23 @@ export function createWorktree(base: string, label: string): Worktree | null {
 
 /**
  * 收尾：把 worktree 里的改动提交到隔离分支，再移除 worktree。
- * 返回是否产生了提交（committed=false 时删掉空分支，避免污染）。
+ * - 有改动且提交成功 → committed=true，移除 worktree（分支保留供合并）。
+ * - 有改动但提交失败（如 pre-commit 钩子拒绝）→ keptDir 返回 worktree 路径，
+ *   **保留现场不删除**，避免例程成果被静默销毁。
+ * - 无改动 → 移除 worktree 并删掉空分支。
  */
-export function finalizeWorktree(wt: Worktree): { branch: string; committed: boolean } {
+export function finalizeWorktree(wt: Worktree): {
+  branch: string
+  committed: boolean
+  keptDir?: string
+} {
   let committed = false
+  let hadChanges = false
   try {
     git(['add', '-A'], wt.dir)
-    if (git(['status', '--porcelain'], wt.dir).trim()) {
-      // 带上 -c 身份，避免仓库未配置 user.name/email 时提交失败
+    hadChanges = !!git(['status', '--porcelain'], wt.dir).trim()
+    if (hadChanges) {
+      // -c 身份避免未配置 user.name/email；--no-verify 跳过钩子（例程环境常缺钩子依赖）
       git(
         [
           '-c',
@@ -61,6 +70,7 @@ export function finalizeWorktree(wt: Worktree): { branch: string; committed: boo
           '-c',
           'user.email=hemilier@local',
           'commit',
+          '--no-verify',
           '-m',
           'hemilier 例程自动提交（隔离运行）'
         ],
@@ -69,7 +79,11 @@ export function finalizeWorktree(wt: Worktree): { branch: string; committed: boo
       committed = true
     }
   } catch {
-    /* 提交失败则按无提交处理 */
+    /* 提交失败：下方保留现场 */
+  }
+  if (hadChanges && !committed) {
+    // 有改动但没提交成功——保留 worktree，让用户能找回成果
+    return { branch: wt.branch, committed: false, keptDir: wt.dir }
   }
   try {
     git(['worktree', 'remove', '--force', wt.dir], wt.base)

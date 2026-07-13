@@ -221,6 +221,7 @@ const grep: Tool = {
           timedOut = true
           return
         }
+        if (e.isSymbolicLink()) continue // 不跟随符号链接，防止越出工作区读取外部文件
         const full = path.join(dir, e.name)
         if (e.isDirectory()) {
           if (!SKIP_DIRS.has(e.name)) await walk(full)
@@ -489,7 +490,8 @@ const addMemory: Tool = {
   name: 'add_memory',
   description:
     '把对当前项目长期有用的一条信息记入项目记忆（跨对话生效）。只记"下次必然有用"的稳定信息，一次一条、简洁。type 标明类别/置信度：fact(事实) / preference(用户偏好) / decision(决策) / pitfall(坑) / todo(待办)。记前可参考已注入的现有记忆，避免重复。',
-  sideEffect: 'none',
+  // 写盘且内容会注入未来对话的系统提示，必须经用户确认（防提示注入持久化）
+  sideEffect: 'write',
   schema: z.object({
     text: z.string(),
     type: z.enum(['fact', 'preference', 'decision', 'pitfall', 'todo']).optional()
@@ -519,8 +521,8 @@ const forgetMemory: Tool = {
   name: 'forget_memory',
   description:
     '删除一条过时/错误的项目记忆（按记忆条目的短 id 前缀）。当某条记忆已被证伪或不再适用时使用，避免错误记忆长期影响判断。',
-  sideEffect: 'none',
-  schema: z.object({ id: z.string() }),
+  sideEffect: 'write',
+  schema: z.object({ id: z.string().min(4, 'id 至少 4 个字符（防止误删全部记忆）') }),
   parameters: {
     type: 'object',
     properties: {
@@ -538,7 +540,8 @@ const saveSkill: Tool = {
   name: 'save_skill',
   description:
     '把一个可复用的操作流程沉淀为「技能」，写入工作区 .hemilier/skills/<name>/SKILL.md。当某类任务的做法已稳定、未来可能重复时使用；以后可用 load_skill 调用。body 写清触发场景与分步做法。',
-  sideEffect: 'none',
+  // 写盘且技能描述会注入未来对话的系统提示，必须经用户确认（防提示注入持久化）
+  sideEffect: 'write',
   schema: z.object({ name: z.string(), description: z.string(), body: z.string() }),
   parameters: {
     type: 'object',
@@ -558,7 +561,9 @@ const saveSkill: Tool = {
         .replace(/^-+|-+$/g, '') || 'skill'
     const dir = path.join(ctx.workspace, '.hemilier', 'skills', slug)
     await fs.mkdir(dir, { recursive: true })
-    const md = `---\nname: ${name}\ndescription: ${description.replace(/\n/g, ' ')}\n---\n\n${body}\n`
+    // name/description 都清洗换行，防止 frontmatter 行注入
+    const safeName = name.replace(/[\r\n]+/g, ' ').trim()
+    const md = `---\nname: ${safeName}\ndescription: ${description.replace(/[\r\n]+/g, ' ')}\n---\n\n${body}\n`
     await fs.writeFile(path.join(dir, 'SKILL.md'), md, 'utf8')
     return `已沉淀技能：${name}（.hemilier/skills/${slug}/SKILL.md），以后可用 load_skill 调用`
   }
@@ -661,6 +666,9 @@ export function describeTool(tool: Tool, args: Record<string, unknown>): string 
   }
   if (tool.name === 'web_search') return `联网搜索：${String(args.query)}`
   if (tool.name === 'fetch_url') return `读取网页：${String(args.url)}`
-  if (tool.sideEffect === 'write') return `${tool.name} → ${String(args.path)}`
+  if (tool.name === 'add_memory') return `写入项目记忆：${String(args.text ?? '')}`
+  if (tool.name === 'forget_memory') return `删除项目记忆：${String(args.id ?? '')}`
+  if (tool.name === 'save_skill') return `沉淀技能：${String(args.name ?? '')}`
+  if (tool.sideEffect === 'write' && args.path != null) return `${tool.name} → ${String(args.path)}`
   return tool.name
 }

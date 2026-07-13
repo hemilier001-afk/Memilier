@@ -15,6 +15,9 @@ import type {
 // 防止 React StrictMode 下 init 跑两次导致 IPC 监听器重复注册（会造成消息重复）
 let listenersAttached = false
 
+// 各会话的流式文本缓冲（非响应式；切回该会话时恢复未完成的输出）
+const streamTexts = new Map<string, string>()
+
 function applyTheme(theme: Settings['theme']): void {
   const dark =
     theme === 'dark' ||
@@ -34,7 +37,11 @@ interface UIState {
   active: Conversation | null
   streaming: boolean
   streamingText: string
+  /** 正在运行的会话 id（按会话跟踪；streaming 仅反映当前 active 会话） */
+  runningIds: string[]
   permission: PermissionRequest | null
+  /** 待处理的授权请求队列（可能有多个会话同时请求；permission 始终是队首） */
+  permissionQueue: PermissionRequest[]
   settingsOpen: boolean
   customizeOpen: boolean
   routinesOpen: boolean
@@ -109,7 +116,9 @@ export const useStore = create<UIState>((set, get) => ({
   active: null,
   streaming: false,
   streamingText: '',
+  runningIds: [],
   permission: null,
+  permissionQueue: [],
   settingsOpen: false,
   customizeOpen: false,
   pendingEdit: null,
@@ -150,7 +159,11 @@ export const useStore = create<UIState>((set, get) => ({
       window.api.onAgentEvent(({ conversationId, event }) => {
         handleAgentEvent(conversationId, event, set, get)
       })
-      window.api.onPermissionRequest((req) => set({ permission: req }))
+      window.api.onPermissionRequest((req) => {
+        // 入队而非覆盖：多个会话同时请求授权时逐个处理，避免前一个请求永远悬挂
+        const queue = [...get().permissionQueue, req]
+        set({ permissionQueue: queue, permission: queue[0] })
+      })
       window.api.onTasksUpdate((tasks) => {
         // 后台任务会新建对话，顺带刷新对话列表
         set({ tasks })
@@ -182,10 +195,11 @@ export const useStore = create<UIState>((set, get) => ({
 
   selectConversation: async (id) => {
     const conv = await window.api.getConversation(id)
+    // 按会话恢复流式状态：切回一个仍在生成的会话时，继续显示其进度而不是“假死”
     set({
       active: conv,
-      streamingText: '',
-      streaming: false,
+      streaming: get().runningIds.includes(id),
+      streamingText: streamTexts.get(id) ?? '',
       plan: conv?.plan ?? [],
       diffs: [],
       terminalOutput: '',
@@ -242,12 +256,15 @@ export const useStore = create<UIState>((set, get) => ({
       images: images?.length ? images : undefined,
       createdAt: Date.now()
     }
+    streamTexts.delete(active.id)
     set({
       active: { ...active, messages: [...active.messages, userMsg] },
       streaming: true,
-      streamingText: ''
+      streamingText: '',
+      runningIds: [...get().runningIds.filter((i) => i !== active.id), active.id]
     })
-    void window.api.sendMessage(active.id, content, images)
+    // 把乐观消息的 id 一并传给主进程，保证两端持久化的消息 id 一致（编辑重发依赖它）
+    void window.api.sendMessage(active.id, content, images, userMsg.id)
   },
 
   regenerate: () => {
@@ -257,7 +274,13 @@ export const useStore = create<UIState>((set, get) => ({
     const messages = [...active.messages]
     while (messages.length && messages[messages.length - 1].role !== 'user') messages.pop()
     if (!messages.length) return
-    set({ active: { ...active, messages }, streaming: true, streamingText: '' })
+    streamTexts.delete(active.id)
+    set({
+      active: { ...active, messages },
+      streaming: true,
+      streamingText: '',
+      runningIds: [...get().runningIds.filter((i) => i !== active.id), active.id]
+    })
     void window.api.regenerate(active.id)
   },
 
@@ -288,8 +311,15 @@ export const useStore = create<UIState>((set, get) => ({
 
   abort: () => {
     const active = get().active
-    if (active) void window.api.abort(active.id)
-    set({ streaming: false, streamingText: '' })
+    if (active) {
+      void window.api.abort(active.id)
+      streamTexts.delete(active.id)
+      set({
+        streaming: false,
+        streamingText: '',
+        runningIds: get().runningIds.filter((i) => i !== active.id)
+      })
+    }
   },
 
   setActiveModel: (model) => {
@@ -391,7 +421,8 @@ export const useStore = create<UIState>((set, get) => ({
     const req = get().permission
     if (!req) return
     void window.api.respondPermission(req.id, approved, remember)
-    set({ permission: null })
+    const rest = get().permissionQueue.filter((r) => r.id !== req.id)
+    set({ permissionQueue: rest, permission: rest[0] ?? null })
   },
 
   setView: (view) => {
@@ -403,8 +434,8 @@ export const useStore = create<UIState>((set, get) => ({
       rightPanelOpen: view !== 'chat',
       rightTab: 'files',
       active: next ?? null,
-      streaming: false,
-      streamingText: '',
+      streaming: next ? get().runningIds.includes(next.id) : false,
+      streamingText: next ? (streamTexts.get(next.id) ?? '') : '',
       plan: next?.plan ?? [],
       diffs: [],
       terminalOutput: '',
@@ -468,19 +499,32 @@ function handleAgentEvent(
   set: (partial: Partial<UIState>) => void,
   get: () => UIState
 ): void {
+  // —— 按会话维护运行状态（与哪个会话正被查看无关）——
+  if (event.type === 'token') {
+    streamTexts.set(conversationId, (streamTexts.get(conversationId) ?? '') + event.text)
+    if (!get().runningIds.includes(conversationId)) {
+      // 后台例程等未经 send() 启动的运行：收到 token 即视为在跑
+      set({ runningIds: [...get().runningIds, conversationId] })
+    }
+  } else if (event.type === 'done' || event.type === 'error') {
+    streamTexts.delete(conversationId)
+    set({ runningIds: get().runningIds.filter((i) => i !== conversationId) })
+  }
+
   const active = get().active
   if (!active || active.id !== conversationId) {
-    if (event.type === 'done' || event.type === 'error') set({ streaming: false })
+    // 非当前会话：仅记账，不动 active 会话的 streaming/streamingText（避免互相干扰）
     return
   }
 
   switch (event.type) {
     case 'token':
-      set({ streamingText: get().streamingText + event.text })
+      set({ streamingText: streamTexts.get(conversationId) ?? '' })
       break
 
     case 'message': {
       const isAssistant = event.message.role === 'assistant'
+      if (isAssistant) streamTexts.delete(conversationId) // 该轮流式文本已成为完整消息
       set({
         active: { ...active, messages: [...active.messages, event.message] },
         streamingText: isAssistant ? '' : get().streamingText

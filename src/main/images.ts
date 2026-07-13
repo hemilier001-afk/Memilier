@@ -19,6 +19,15 @@ function baseDir(): string {
   return path.join(app.getPath('userData'), 'images')
 }
 
+// 防路径穿越：解析后必须仍在 images 基目录之内（拒绝 ../、绝对路径等）
+function safeJoin(rel: string): string | null {
+  if (!rel || rel.includes('\0')) return null
+  const base = baseDir()
+  const abs = path.resolve(base, rel)
+  if (abs !== base && !abs.startsWith(base + path.sep)) return null
+  return abs
+}
+
 export const imageStore = {
   isRef(v: string): boolean {
     return v.startsWith(PREFIX)
@@ -39,7 +48,8 @@ export const imageStore = {
   /** 引用 → data URL；非引用（旧数据里的内联 data URL）原样返回；文件缺失返回空串 */
   async resolve(ref: string): Promise<string> {
     if (!ref.startsWith(PREFIX)) return ref
-    const abs = path.join(baseDir(), ref.slice(PREFIX.length))
+    const abs = safeJoin(ref.slice(PREFIX.length))
+    if (!abs) return '' // 引用越界（如 ../..）一律拒绝
     try {
       const buf = await fs.readFile(abs)
       const ext = path.extname(abs).slice(1).toLowerCase()
@@ -50,9 +60,25 @@ export const imageStore = {
     }
   },
 
-  /** 删除某会话的全部图片（会话被删除时清理） */
+  /** 删除一批图片引用对应的文件（消息被截断/编辑重发时清理，避免孤儿文件泄漏） */
+  deleteRefs(refs: string[]): void {
+    for (const ref of refs) {
+      if (!ref.startsWith(PREFIX)) continue
+      const abs = safeJoin(ref.slice(PREFIX.length))
+      if (!abs) continue
+      try {
+        rmSync(abs, { force: true })
+      } catch {
+        /* 清理失败忽略 */
+      }
+    }
+  },
+
+  /** 删除某会话的全部图片（会话被删除时清理）。id 必须是单层目录名，防 ../ 越界删除 */
   deleteConversation(conversationId: string): void {
-    const dir = path.join(baseDir(), conversationId)
+    if (!conversationId || /[\\/]|\.\./.test(conversationId)) return
+    const dir = safeJoin(conversationId)
+    if (!dir) return
     try {
       if (existsSync(dir)) rmSync(dir, { recursive: true, force: true })
     } catch {

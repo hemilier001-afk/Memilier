@@ -170,9 +170,14 @@ function createWindow(): void {
 app.whenReady().then(() => {
   if (!gotSingleInstanceLock) return
   setupLogging()
-  // 允许麦克风（语音输入用）
-  session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
-    callback(permission === 'media')
+  // 仅允许麦克风（语音输入用）；摄像头等其它媒体一律拒绝
+  session.defaultSession.setPermissionRequestHandler((_wc, permission, callback, details) => {
+    if (permission === 'media') {
+      const types = (details as { mediaTypes?: string[] }).mediaTypes
+      callback(!types || types.every((t) => t === 'audio'))
+      return
+    }
+    callback(false)
   })
   if (!process.env['ELECTRON_RENDERER_URL']) setupContentSecurityPolicy()
   else applyDevIcon()

@@ -39,22 +39,28 @@ export function resolveProvider(modelId: string, settings: Settings): ModelProvi
   return makeProvider(cfg ?? getProviders(settings)[0])
 }
 
-/** 聚合所有提供方的模型，name 为带前缀的路由 id */
+/** 聚合所有提供方的模型，name 为带前缀的路由 id。并行 + 每个提供方 5s 超时，单个端点不可达不拖垮整个列表 */
 export async function listAllModels(settings: Settings): Promise<ModelInfo[]> {
+  const providers = getProviders(settings)
+  const results = await Promise.allSettled(
+    providers.map(async (p) => {
+      if (p.kind === 'openai' && p.models?.length) return { p, names: p.models }
+      const names = await Promise.race([
+        makeProvider(p)
+          .listModels()
+          .then((ms) => ms.map((m) => m.name)),
+        new Promise<string[]>((_, reject) =>
+          setTimeout(() => reject(new Error('列模型超时')), 5000)
+        )
+      ])
+      return { p, names }
+    })
+  )
   const out: ModelInfo[] = []
-  for (const p of getProviders(settings)) {
-    try {
-      let names: string[]
-      if (p.kind === 'openai' && p.models?.length) {
-        names = p.models
-      } else {
-        names = (await makeProvider(p).listModels()).map((m) => m.name)
-      }
-      for (const n of names) {
-        out.push({ name: `${p.id}::${n}`, label: n, provider: p.label })
-      }
-    } catch {
-      /* 某个提供方不可达时跳过 */
+  for (const r of results) {
+    if (r.status !== 'fulfilled') continue // 某个提供方不可达/超时时跳过
+    for (const n of r.value.names) {
+      out.push({ name: `${r.value.p.id}::${n}`, label: n, provider: r.value.p.label })
     }
   }
   return out

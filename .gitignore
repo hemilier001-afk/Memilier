@@ -5,3 +5,6 @@ dist/
 .DS_Store
 .env
 .env.local
+
+# 本地工具配置，不公开
+.claude/

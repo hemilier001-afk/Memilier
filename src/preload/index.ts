@@ -24,8 +24,8 @@ const api: Api = {
   setConversationWorkspace: (id, dir) => ipcRenderer.invoke('conversations:setWorkspace', id, dir),
   pickFile: () => ipcRenderer.invoke('dialog:pickFile'),
   transcribeAudio: (bytes, mime) => ipcRenderer.invoke('asr:transcribe', bytes, mime),
-  sendMessage: (conversationId, content, images) =>
-    ipcRenderer.invoke('agent:send', conversationId, content, images),
+  sendMessage: (conversationId, content, images, userMessageId) =>
+    ipcRenderer.invoke('agent:send', conversationId, content, images, userMessageId),
   pickImage: () => ipcRenderer.invoke('dialog:pickImage'),
   readImage: (ref) => ipcRenderer.invoke('images:read', ref),
   regenerate: (conversationId) => ipcRenderer.invoke('agent:regenerate', conversationId),

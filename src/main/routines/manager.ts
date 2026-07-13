@@ -139,7 +139,9 @@ export const routineManager = {
           role: 'assistant',
           content: res.committed
             ? `🔒 本次在隔离分支 \`${res.branch}\` 中运行，改动已提交（你的工作树未受影响）。可用 \`git checkout ${res.branch}\` 或 \`git merge ${res.branch}\` 查看/合并。`
-            : '🔒 本次在隔离 worktree 中运行，无文件改动。',
+            : res.keptDir
+              ? `⚠️ 本次运行有文件改动，但提交到隔离分支失败。**改动已保留在** \`${res.keptDir}\`，请手动查看/取回后删除该目录。`
+              : '🔒 本次在隔离 worktree 中运行，无文件改动。',
           createdAt: Date.now()
         }
         conv.messages.push(note)

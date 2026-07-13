@@ -42,17 +42,31 @@ export class PermissionManager {
     sideEffect: SideEffect,
     description: string,
     /** 强制弹框：危险操作即使被自动放行/已记住也要再确认 */
-    forcePrompt = false
+    forcePrompt = false,
+    /** 本次运行的中断信号：运行被中止时挂起的授权请求自动按“拒绝”解决，避免会话永久卡死 */
+    signal?: AbortSignal
   ): Promise<boolean> {
-    if (this.autoApproveAll) return Promise.resolve(true)
+    // 无人值守（后台例程）：普通工具自动放行，但危险操作（forcePrompt）直接拒绝而非放行
+    if (this.autoApproveAll) return Promise.resolve(!forcePrompt)
     if (!forcePrompt && sideEffect === 'none' && this.getSettings().autoApproveReadOnly) {
       return Promise.resolve(true)
     }
     const key = rememberKey(tc, sideEffect)
     if (!forcePrompt && this.remembered.has(key)) return Promise.resolve(true)
+    if (signal?.aborted) return Promise.resolve(false)
     const id = randomUUID()
     return new Promise<boolean>((resolve) => {
-      this.pending.set(id, { resolve, key })
+      const onAbort = (): void => {
+        if (this.pending.delete(id)) resolve(false)
+      }
+      signal?.addEventListener('abort', onAbort, { once: true })
+      this.pending.set(id, {
+        key,
+        resolve: (approved) => {
+          signal?.removeEventListener('abort', onAbort)
+          resolve(approved)
+        }
+      })
       this.send({ id, toolName: tc.name, args: tc.args, description })
     })
   }
