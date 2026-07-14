@@ -240,6 +240,14 @@ export const store = {
       writeJSON(convPath, conversations)
     }
   },
+  setConversationPinned(id: string, pinned: boolean): void {
+    ensure()
+    const c = conversations[id]
+    if (c) {
+      c.pinned = pinned || undefined
+      writeJSON(convPath, conversations)
+    }
+  },
   setConversationWorkspace(id: string, dir: string): void {
     ensure()
     const c = conversations[id]

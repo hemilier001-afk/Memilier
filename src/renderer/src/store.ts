@@ -565,7 +565,9 @@ function handleAgentEvent(
       break
 
     case 'diff':
-      set({ diffs: [...get().diffs, event.entry], rightTab: 'diff', rightPanelOpen: true })
+      // 只记录，不再强制打开右栏/切换标签（连续改多个文件时面板反复弹跳很干扰）；
+      // Diff 标签自带改动计数作为提示
+      set({ diffs: [...get().diffs, event.entry] })
       break
 
     case 'tool_call_result': {

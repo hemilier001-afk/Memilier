@@ -60,6 +60,7 @@ function Preview({ tool, args }: { tool: string; args: Record<string, unknown> }
 
 export function PermissionDialog(): JSX.Element | null {
   const permission = useStore((s) => s.permission)
+  const queue = useStore((s) => s.permissionQueue)
   const respond = useStore((s) => s.respondPermission)
   const [remember, setRemember] = useState(false)
 
@@ -70,10 +71,16 @@ export function PermissionDialog(): JSX.Element | null {
     setRemember(false)
   }
 
+  // 非模态：固定在输入框上方的卡片，不遮挡对话——可以边看上下文边决定（仿 Claude Code）
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="w-[520px] max-w-[92vw] rounded-xl border border-line bg-surface p-5 text-fg shadow-xl">
-        <h2 className="text-base font-semibold">需要授权</h2>
+    <div className="pointer-events-none fixed inset-x-0 bottom-28 z-50 flex justify-center px-4">
+      <div className="pointer-events-auto w-[560px] max-w-full rounded-xl border-2 border-accent/60 bg-surface p-4 text-fg shadow-2xl">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold">🔐 需要授权</h2>
+          {queue.length > 1 && (
+            <span className="text-xs text-muted">还有 {queue.length - 1} 个待处理</span>
+          )}
+        </div>
         <p className="mt-1 font-mono text-sm text-accent">{permission.description}</p>
 
         <div className="mt-3">

@@ -109,7 +109,24 @@ function ConvRow({ c }: { c: Conversation }): JSX.Element {
         <button
           onClick={(e) => {
             e.stopPropagation()
-            void deleteConversation(c.id)
+            void window.api.setConversationPinned(c.id, !c.pinned).then(() => {
+              useStore.setState((s) => ({
+                conversations: s.conversations.map((x) =>
+                  x.id === c.id ? { ...x, pinned: !c.pinned } : x
+                )
+              }))
+            })
+          }}
+          className={c.pinned ? 'text-accent' : 'text-muted hover:text-accent'}
+          title={c.pinned ? '取消置顶' : '置顶'}
+        >
+          📌
+        </button>
+        <button
+          onClick={(e) => {
+            e.stopPropagation()
+            if (window.confirm(`删除对话「${c.title}」？此操作不可撤销。`))
+              void deleteConversation(c.id)
           }}
           className="text-muted hover:text-red-500"
           title="删除"
@@ -220,7 +237,10 @@ export function Sidebar(): JSX.Element {
       [...conversations]
         .filter((c) => (c.kind ?? 'chat') === view)
         .filter((c) => (activeProjectId ? c.projectId === activeProjectId : true))
-        .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)),
+        .sort(
+          (a, b) =>
+            Number(!!b.pinned) - Number(!!a.pinned) || (b.updatedAt || 0) - (a.updatedAt || 0)
+        ),
     [conversations, view, activeProjectId]
   )
   const filtered = useMemo(

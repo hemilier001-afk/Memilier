@@ -296,6 +296,7 @@ export async function runAgent(opts: RunOptions): Promise<void> {
     toolDefs = listToolDefs(true)
   }
 
+  let partial = '' // 本轮已流式输出的文本；中止时保留成消息而非丢弃
   try {
     for (let i = 0; i < MAX_ITERATIONS; i++) {
       if (signal.aborted) break
@@ -303,12 +304,16 @@ export async function runAgent(opts: RunOptions): Promise<void> {
       const sendMessages = await resolveImagesForSend(
         sanitizeToolPairing(stripOldImages(trimHistory(conv.messages)))
       )
+      partial = ''
       const { content, toolCalls } = await provider.chat({
         model,
         messages: [system, ...sendMessages],
         tools: toolDefs,
         signal,
-        onToken: (text) => send({ type: 'token', text })
+        onToken: (text) => {
+          partial += text
+          send({ type: 'token', text })
+        }
       })
 
       const assistantMsg: Message = {
@@ -453,6 +458,19 @@ export async function runAgent(opts: RunOptions): Promise<void> {
     send({ type: 'done' })
   } catch (e) {
     if (signal.aborted) {
+      // 中止时保留已生成的半截回答（仿 Claude），而不是让它凭空消失
+      if (partial.trim()) {
+        const stopped: Message = {
+          id: randomUUID(),
+          role: 'assistant',
+          content: `${partial}\n\n⏹ *已停止*`,
+          createdAt: Date.now()
+        }
+        conv.messages.push(stopped)
+        conv.updatedAt = Date.now()
+        store.saveConversation(conv)
+        send({ type: 'message', message: stopped })
+      }
       send({ type: 'done' })
       return
     }

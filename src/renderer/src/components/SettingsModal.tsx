@@ -93,6 +93,13 @@ export function SettingsModal(): JSX.Element | null {
     setPlugins(await window.api.listPlugins())
   }
 
+  const [verifyMsg, setVerifyMsg] = useState<Record<string, string>>({})
+  const verifyProvider = async (id: string): Promise<void> => {
+    setVerifyMsg((m) => ({ ...m, [id]: '验证中…' }))
+    const r = await window.api.testProvider(id)
+    setVerifyMsg((m) => ({ ...m, [id]: r.ok ? `✓ ${r.note ?? '连接成功'}` : `✗ ${r.error}` }))
+  }
+
   const testMcp = async (): Promise<void> => {
     setMcpTesting(true)
     setMcpStatus(null)
@@ -302,12 +309,25 @@ export function SettingsModal(): JSX.Element | null {
                             className="flex-1 rounded-md border border-line bg-transparent px-2 py-1"
                           />
                           <button
+                            onClick={() => void verifyProvider(p.id)}
+                            className="text-xs text-accent hover:underline"
+                          >
+                            验证
+                          </button>
+                          <button
                             onClick={() => removeProvider(p.id)}
                             className="text-xs text-muted hover:text-red-500"
                           >
                             {t('remove')}
                           </button>
                         </div>
+                        {verifyMsg[p.id] && (
+                          <p
+                            className={`mb-1 text-xs ${verifyMsg[p.id].startsWith('✓') ? 'text-green-500' : 'text-red-500'}`}
+                          >
+                            {verifyMsg[p.id]}
+                          </p>
+                        )}
                         <input
                           value={p.baseUrl}
                           onChange={(e) => patchProvider(p.id, { baseUrl: e.target.value })}

@@ -107,6 +107,8 @@ export interface Conversation {
   mode?: AgentMode
   /** 所属项目（可选） */
   projectId?: string
+  /** 置顶（侧栏排序优先） */
+  pinned?: boolean
   /** 智能体维护的执行计划 */
   plan?: PlanStep[]
   messages: Message[]
@@ -339,6 +341,10 @@ export interface Api {
   listTasks(): Promise<BackgroundTask[]>
   /** 中止一个正在运行的后台任务 */
   cancelTask(taskId: string): Promise<void>
+  /** 置顶/取消置顶会话 */
+  setConversationPinned(id: string, pinned: boolean): Promise<void>
+  /** 验证云端 Provider 可用性 */
+  testProvider(providerId: string): Promise<{ ok: boolean; note?: string; error?: string }>
   onAgentEvent(cb: (payload: { conversationId: string; event: AgentEvent }) => void): () => void
   onPermissionRequest(cb: (req: PermissionRequest) => void): () => void
   onTerminalEvent(cb: (e: TerminalEvent) => void): () => void

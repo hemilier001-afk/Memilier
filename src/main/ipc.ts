@@ -355,6 +355,30 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     return pluginManager.installFromDir(res.filePaths[0])
   })
 
+  // 验证某个云端 Provider 的可用性（拉 /models，8s 超时；401=密钥错，404=端点不支持列表）
+  ipcMain.handle('providers:test', async (_e, providerId: string) => {
+    const cfg = (store.getSettings().providers ?? []).find((p) => p.id === providerId)
+    if (!cfg) return { ok: false, error: '未找到该提供方' }
+    try {
+      const res = await fetch(`${cfg.baseUrl}/models`, {
+        headers: cfg.apiKey ? { Authorization: `Bearer ${cfg.apiKey}` } : {},
+        signal: AbortSignal.timeout(8000)
+      })
+      if (res.status === 401) return { ok: false, error: 'API Key 无效（401）' }
+      if (res.status === 404)
+        return { ok: true, note: '端点不提供 /models 列表，但地址可达；请直接对话验证' }
+      if (!res.ok) return { ok: false, error: `HTTP ${res.status}` }
+      const data = (await res.json().catch(() => null)) as { data?: unknown[] } | null
+      return { ok: true, note: `连接成功，可用模型 ${data?.data?.length ?? 0} 个` }
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : '网络错误' }
+    }
+  })
+
+  ipcMain.handle('conversations:setPinned', (_e, id: string, pinned: boolean) =>
+    store.setConversationPinned(id, pinned)
+  )
+
   // MCP 连接状态探测（用户配置 + 启用插件提供的 server）
   ipcMain.handle('mcp:status', () => {
     const s = store.getSettings()

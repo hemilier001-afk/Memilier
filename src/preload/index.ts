@@ -73,6 +73,8 @@ const api: Api = {
   runRoutineNow: (id) => ipcRenderer.invoke('routines:runNow', id),
   listTasks: () => ipcRenderer.invoke('tasks:list'),
   cancelTask: (taskId) => ipcRenderer.invoke('tasks:cancel', taskId),
+  setConversationPinned: (id, pinned) => ipcRenderer.invoke('conversations:setPinned', id, pinned),
+  testProvider: (providerId) => ipcRenderer.invoke('providers:test', providerId),
 
   onAgentEvent: (cb) => {
     const listener = (_e: unknown, payload: Parameters<typeof cb>[0]): void => cb(payload)

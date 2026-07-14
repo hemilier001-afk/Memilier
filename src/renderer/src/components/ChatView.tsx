@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import type { Message as MsgType } from '@shared/types'
 import { useStore, type ToolView } from '../store'
 import { useT } from '../i18n'
 import { MessageView, StreamingBubble } from './Message'
@@ -13,9 +14,50 @@ const STARTERS = [
 function StarterPrompts(): JSX.Element {
   const send = useStore((s) => s.send)
   const t = useT()
+  const settings = useStore((s) => s.settings)
+  const view = useStore((s) => s.view)
+  const active = useStore((s) => s.active)
+  const setSettingsOpen = useStore((s) => s.setSettingsOpen)
+  const pickWs = useStore((s) => s.pickActiveWorkspace)
+
+  // 首次使用：还没配任何模型 → 欢迎引导卡（替代“发消息才报错”）
+  const unconfigured = settings && !settings.defaultModel && !(settings.providers ?? []).length
+  if (unconfigured) {
+    return (
+      <div className="mt-12 text-center">
+        <p className="mb-2 text-lg font-medium text-fg">👋 欢迎使用 Hemilier</p>
+        <p className="mb-5 text-sm text-muted">开始对话前，先接入一个模型（三步，约 1 分钟）</p>
+        <ol className="mx-auto mb-5 max-w-md space-y-2 text-left text-sm text-muted">
+          <li>1. 打开设置 → 模型，添加提供方（推荐 DeepSeek）</li>
+          <li>2. 粘贴你自己的 API Key（本机加密保存）</li>
+          <li>
+            3. 回到这里，顶部选择 <code className="text-accent">deepseek-chat</code> 即可开聊
+          </li>
+        </ol>
+        <button
+          onClick={() => setSettingsOpen(true)}
+          className="rounded-lg bg-accent px-4 py-2 text-sm text-white transition hover:opacity-90"
+        >
+          ⚙ 打开设置
+        </button>
+      </div>
+    )
+  }
+
   return (
     <div className="mt-12 text-center">
       <p className="mb-5 text-lg font-medium text-muted">{t('starterHint')}</p>
+      {view !== 'chat' && (
+        <div className="mx-auto mb-4 max-w-xl rounded-lg border border-line bg-surface-2 px-4 py-2 text-xs text-muted">
+          当前工作区：<span className="font-mono">{active?.workspaceDir || '(未设置)'}</span>
+          <button onClick={() => void pickWs()} className="ml-2 text-accent hover:underline">
+            更换
+          </button>
+          <span className="ml-2">
+            · 提示：在工作区放一个 <code>AGENTS.md</code> 可为该项目定制智能体行为
+          </span>
+        </div>
+      )}
       <div className="mx-auto grid max-w-xl grid-cols-1 gap-2 sm:grid-cols-2">
         {STARTERS.map((s) => (
           <button
@@ -104,20 +146,144 @@ function ModelSelector(): JSX.Element {
 
 function TokenMeter(): JSX.Element | null {
   const active = useStore((s) => s.active)
+  const compact = useStore((s) => s.compact)
+  const streaming = useStore((s) => s.streaming)
   if (!active || active.messages.length === 0) return null
   const chars = active.messages.reduce((n, m) => n + (m.content?.length ?? 0), 0)
   const tokens = Math.ceil(chars / 3) // 粗估：CJK 偏保守
   const near = chars > 40_000 // 接近 48k 字符的历史预算
   const label = tokens >= 1000 ? `~${(tokens / 1000).toFixed(1)}k` : `~${tokens}`
+  if (near) {
+    // 偏长时给出直接出口：点击即压缩（等价 /compact）
+    return (
+      <button
+        onClick={() => !streaming && void compact()}
+        title="对话较长，较早消息将被自动裁剪。点击把早期历史压缩成摘要（/compact）"
+        className="rounded-md border border-amber-400/50 px-1.5 py-0.5 text-xs text-amber-500 transition hover:bg-amber-500/10"
+      >
+        {label} tokens ⚠ 压缩
+      </button>
+    )
+  }
   return (
-    <span
-      title={
-        near ? '对话较长，较早的消息将不再发送给模型（自动裁剪）' : '当前对话上下文的 token 粗估'
-      }
-      className={`text-xs ${near ? 'text-amber-500' : 'text-muted'}`}
-    >
-      {label} tokens{near ? ' ⚠' : ''}
+    <span title="当前对话上下文的 token 粗估" className="text-xs text-muted">
+      {label} tokens
     </span>
+  )
+}
+
+// 把连续的「过程消息」（带工具调用的 assistant + tool 结果）聚合成一个「工作了 N 步」组，
+// 多步任务不再刷屏一串过程行；单步则按原样渲染
+function renderGrouped(
+  messages: MsgType[],
+  streaming: boolean,
+  lastAssistantId: string | null,
+  regenerate: () => void
+): JSX.Element[] {
+  const items: JSX.Element[] = []
+  let buf: MsgType[] = []
+  const flush = (): void => {
+    if (!buf.length) return
+    const steps = buf.filter((m) => m.role === 'assistant')
+    if (steps.length > 1) {
+      const counts: Record<string, number> = {}
+      for (const s of steps)
+        for (const tc of s.toolCalls ?? []) counts[tc.name] = (counts[tc.name] ?? 0) + 1
+      const stat = Object.entries(counts)
+        .map(([n, c]) => (c > 1 ? `${n} ×${c}` : n))
+        .slice(0, 4)
+        .join('、')
+      const group = [...buf]
+      items.push(
+        <details key={`grp-${group[0].id}`} className="pl-10">
+          <summary className="flex cursor-pointer list-none items-center gap-2 py-0.5 text-xs text-muted transition hover:text-fg [&::-webkit-details-marker]:hidden">
+            <span>⚙️</span>
+            <span className="truncate">
+              工作了 {steps.length} 步（{stat}）
+            </span>
+            <span className="shrink-0 opacity-60">▸</span>
+          </summary>
+          <div className="-ml-9 mt-1 space-y-1">
+            {group.map((m) => (
+              <MessageView key={m.id} message={m} />
+            ))}
+          </div>
+        </details>
+      )
+    } else {
+      for (const m of buf) items.push(<MessageView key={m.id} message={m} />)
+    }
+    buf = []
+  }
+  for (const m of messages) {
+    const isProc = m.role === 'tool' || (m.role === 'assistant' && !!m.toolCalls?.length)
+    if (isProc) {
+      buf.push(m)
+    } else {
+      flush()
+      items.push(
+        <MessageView
+          key={m.id}
+          message={m}
+          isLast={!streaming && m.id === lastAssistantId}
+          onRegenerate={regenerate}
+        />
+      )
+    }
+  }
+  flush()
+  return items
+}
+
+// 头部「⋯」溢出菜单：收纳低频操作，避免图标堆挤
+function HeaderMenu({
+  disabled,
+  streaming
+}: {
+  disabled: boolean
+  streaming: boolean
+}): JSX.Element {
+  const [open, setOpen] = useState(false)
+  const item =
+    'block w-full px-3 py-1.5 text-left text-xs text-fg transition hover:bg-surface-2 disabled:opacity-40'
+  const run = (fn: () => void): void => {
+    setOpen(false)
+    fn()
+  }
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        title="更多操作"
+        className="rounded-md border border-line px-2 py-1 text-sm text-muted transition hover:text-fg"
+      >
+        ⋯
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 top-full z-20 mt-1 w-48 rounded-lg border border-line bg-surface py-1 shadow-lg">
+            <button
+              className={item}
+              disabled={disabled || streaming}
+              onClick={() => run(() => void useStore.getState().compact())}
+            >
+              📜 压缩上下文（/compact）
+            </button>
+            <button
+              className={item}
+              disabled={disabled || streaming}
+              onClick={() => run(() => useStore.getState().reflect())}
+            >
+              🧠 反思沉淀（记忆/技能）
+            </button>
+            <button className={item} onClick={() => run(() => useStore.getState().exportActive())}>
+              ⬇ 导出对话为 Markdown
+            </button>
+          </div>
+        </>
+      )}
+    </div>
   )
 }
 
@@ -361,6 +527,7 @@ function Composer(): JSX.Element {
   const [files, setFiles] = useState<string[]>([])
   const [images, setImages] = useState<string[]>([])
   const [atQuery, setAtQuery] = useState<string | null>(null)
+  const [selIdx, setSelIdx] = useState(0) // 斜杠/@ 菜单的键盘高亮项
   const streaming = useStore((s) => s.streaming)
   const send = useStore((s) => s.send)
   const editResend = useStore((s) => s.editResend)
@@ -483,6 +650,7 @@ function Composer(): JSX.Element {
     setText(v)
     const m = /@([^\s@]*)$/.exec(v)
     setAtQuery(m ? m[1] : null)
+    setSelIdx(0)
     resize()
   }
 
@@ -539,11 +707,12 @@ function Composer(): JSX.Element {
       <div className="relative mx-auto max-w-3xl">
         {slashMatches.length > 0 && (
           <div className="absolute bottom-full left-0 mb-1 w-full overflow-hidden rounded-lg border border-line bg-surface py-1 shadow-lg">
-            {slashMatches.map((c) => (
+            {slashMatches.map((c, i) => (
               <button
                 key={c.id}
                 onClick={() => runSlash(c)}
-                className="flex w-full items-baseline gap-3 px-3 py-1.5 text-left text-xs hover:bg-surface-2"
+                onMouseEnter={() => setSelIdx(i)}
+                className={`flex w-full items-baseline gap-3 px-3 py-1.5 text-left text-xs hover:bg-surface-2 ${i === selIdx ? 'bg-surface-2' : ''}`}
               >
                 <span className="font-mono font-semibold text-accent">{c.label}</span>
                 <span className="text-muted">{c.desc}</span>
@@ -553,11 +722,12 @@ function Composer(): JSX.Element {
         )}
         {matches.length > 0 && (
           <div className="absolute bottom-full left-0 mb-1 max-h-56 w-full overflow-auto rounded-lg border border-line bg-surface py-1 shadow-lg">
-            {matches.map((f) => (
+            {matches.map((f, i) => (
               <button
                 key={f}
                 onClick={() => pickFile(f)}
-                className="block w-full truncate px-3 py-1 text-left font-mono text-xs text-fg hover:bg-surface-2"
+                onMouseEnter={() => setSelIdx(i)}
+                className={`block w-full truncate px-3 py-1 text-left font-mono text-xs text-fg hover:bg-surface-2 ${i === selIdx ? 'bg-surface-2' : ''}`}
               >
                 {f}
               </button>
@@ -621,17 +791,28 @@ function Composer(): JSX.Element {
                 setAtQuery(null)
                 return
               }
-              // 斜杠命令：Enter 执行第一条匹配，Esc 清空关闭
+              // 菜单键盘导航：↑↓ 移动高亮，Enter 选中（斜杠与 @ 两个菜单共用）
+              const menuLen = slashMatches.length || (atQuery !== null ? matches.length : 0)
+              if (menuLen > 0 && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+                e.preventDefault()
+                setSelIdx((i) => (i + (e.key === 'ArrowDown' ? 1 : menuLen - 1)) % menuLen)
+                return
+              }
               if (slashMatches.length > 0) {
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault()
-                  runSlash(slashMatches[0])
+                  runSlash(slashMatches[Math.min(selIdx, slashMatches.length - 1)])
                   return
                 }
                 if (e.key === 'Escape') {
                   setText('')
                   return
                 }
+              }
+              if (atQuery !== null && matches.length > 0 && e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault()
+                pickFile(matches[Math.min(selIdx, matches.length - 1)])
+                return
               }
               if (e.key === 'Enter' && atQuery === null) {
                 const mode = useStore.getState().settings?.submitKey ?? 'enter'
@@ -788,21 +969,7 @@ export function ChatView(): JSX.Element {
           <ViewModeToggle />
           {view === 'chat' && <WorkspacePicker dir={active.workspaceDir} />}
           <ModelSelector />
-          <button
-            onClick={() => useStore.getState().reflect()}
-            disabled={active.messages.length === 0 || streaming}
-            title="反思沉淀：把本次经验记入记忆 / 沉淀为技能"
-            className="rounded-md border border-line px-2 py-1 text-sm text-muted transition hover:text-fg disabled:opacity-40"
-          >
-            🧠
-          </button>
-          <button
-            onClick={() => useStore.getState().exportActive()}
-            title="导出对话为 Markdown"
-            className="rounded-md border border-line px-2 py-1 text-sm text-muted transition hover:text-fg"
-          >
-            ⬇
-          </button>
+          <HeaderMenu disabled={active.messages.length === 0} streaming={streaming} />
           {view !== 'chat' && <PanelToggle />}
         </div>
       </header>
@@ -817,14 +984,7 @@ export function ChatView(): JSX.Element {
           {active.messages.length === 0 && !showStreaming ? (
             <StarterPrompts />
           ) : (
-            active.messages.map((m) => (
-              <MessageView
-                key={m.id}
-                message={m}
-                isLast={!streaming && m.id === lastAssistantId}
-                onRegenerate={regenerate}
-              />
-            ))
+            renderGrouped(active.messages, streaming, lastAssistantId, regenerate)
           )}
           {showStreaming && <StreamingBubble text={streamingText} />}
         </div>
