@@ -25,7 +25,7 @@ function StarterPrompts(): JSX.Element {
   if (unconfigured) {
     return (
       <div className="mt-12 text-center">
-        <p className="mb-2 text-lg font-medium text-fg">👋 欢迎使用 hemilier</p>
+        <p className="font-display mb-2 text-3xl text-fg">👋 欢迎使用 hemilier</p>
         <p className="mb-5 text-sm text-muted">开始对话前，先接入一个模型（三步，约 1 分钟）</p>
         <ol className="mx-auto mb-5 max-w-md space-y-2 text-left text-sm text-muted">
           <li>1. 打开设置 → 模型，添加提供方（推荐 DeepSeek）</li>
@@ -46,7 +46,8 @@ function StarterPrompts(): JSX.Element {
 
   return (
     <div className="mt-12 text-center">
-      <p className="mb-5 text-lg font-medium text-muted">{t('starterHint')}</p>
+      {/* Claude 式衬线问候语 */}
+      <p className="font-display mb-6 text-3xl text-fg">{t('starterHint')}</p>
       {view !== 'chat' && (
         <div className="mx-auto mb-4 max-w-xl rounded-lg border border-line bg-surface-2 px-4 py-2 text-xs text-muted">
           当前工作区：<span className="font-mono">{active?.workspaceDir || '(未设置)'}</span>
@@ -708,8 +709,9 @@ function Composer(): JSX.Element {
       : files.filter((f) => f.toLowerCase().includes(atQuery.toLowerCase())).slice(0, 8)
 
   return (
+    // Claude 式无缝输入区：不加分隔线，输入卡片直接悬浮在纸面底色上
     <div
-      className="border-t border-line bg-paper p-3"
+      className="bg-paper px-3 pb-4 pt-1"
       onDragOver={(e) => e.preventDefault()}
       onDrop={(e) => {
         e.preventDefault()

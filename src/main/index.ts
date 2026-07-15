@@ -133,7 +133,7 @@ function createWindow(): void {
     title: 'hemilier',
     ...(icon ? { icon } : {}),
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#262624', // 预载底色：暖炭色（与深色主题 --paper 一致，避免启动白闪/冷黑闪）
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: true,

@@ -196,7 +196,8 @@ export function MessageView({
           </div>
         ) : null}
         {message.content && (
-          <div className="max-w-[85%] rounded-2xl bg-accent px-4 py-2.5 text-white">
+          // Claude 式用户气泡：浅暖灰底 + 正文色文字（低调），而非重色块
+          <div className="max-w-[85%] rounded-2xl border border-line bg-surface-2 px-4 py-2.5 text-fg">
             <p className="whitespace-pre-wrap break-words">{message.content}</p>
           </div>
         )}

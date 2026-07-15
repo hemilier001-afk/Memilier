@@ -2,15 +2,15 @@
 @tailwind components;
 @tailwind utilities;
 
-/* 暖色品牌调色板（浅色为奶油底，深色为暖炭灰） */
+/* 暖色品牌调色板（对齐 Claude：浅色为暖米白，深色为暖炭色） */
 :root {
   color-scheme: light;
-  --paper: #fbfbfc;
+  --paper: #faf9f5;
   --surface: #ffffff;
-  --surface-2: #f4f4f6;
-  --line: #e6e6ea;
-  --fg: #1a1a1d;
-  --muted: #6e6e78;
+  --surface-2: #f0eee6;
+  --line: #e8e6dc;
+  --fg: #1f1e1d;
+  --muted: #73726c;
   --accent: #d97757;
   --accent-hover: #c2613f;
   --accent-soft: rgba(217, 119, 87, 0.12);
@@ -18,12 +18,12 @@
 
 .dark {
   color-scheme: dark;
-  --paper: #1a1a1c;
-  --surface: #242427;
-  --surface-2: #1f1f22;
-  --line: #34343a;
-  --fg: #ececee;
-  --muted: #9a9aa3;
+  --paper: #262624;
+  --surface: #30302e;
+  --surface-2: #2b2a28;
+  --line: #3e3d39;
+  --fg: #eceae4;
+  --muted: #a6a39a;
   --accent: #d97757;
   --accent-hover: #e08a6c;
   --accent-soft: rgba(217, 119, 87, 0.16);
@@ -135,17 +135,17 @@ body {
   margin: 0.8em 0;
   border-radius: 10px;
   overflow: hidden;
-  border: 1px solid #e6e6ea;
-  background: #fdfdfd;
+  border: 1px solid #e8e6dc;
+  background: #fdfcfa;
 }
 .code-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 5px 12px;
-  background: #f4f4f6;
-  border-bottom: 1px solid #e6e6ea;
-  color: #6e6e78;
+  background: #f0eee6;
+  border-bottom: 1px solid #e8e6dc;
+  color: #73726c;
   font-size: 11px;
   font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   user-select: none;
@@ -174,6 +174,12 @@ body {
 .md td {
   border: 1px solid rgba(135, 131, 120, 0.4);
   padding: 0.3em 0.6em;
+}
+
+/* 衬线展示字体：问候语/空状态大标题用（Claude 的招牌视觉元素之一） */
+.font-display {
+  font-family: Georgia, 'Times New Roman', 'Songti SC', 'SimSun', serif;
+  letter-spacing: 0.01em;
 }
 
 /* 品牌圆环「呼吸」动画：模型生成回答时，头像里的圆圈周期性缩放 */
