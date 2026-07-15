@@ -345,6 +345,8 @@ export interface Api {
   setConversationPinned(id: string, pinned: boolean): Promise<void>
   /** 验证云端 Provider 可用性 */
   testProvider(providerId: string): Promise<{ ok: boolean; note?: string; error?: string }>
+  /** 渲染端错误写入主进程日志（fire-and-forget） */
+  logError(msg: string): void
   onAgentEvent(cb: (payload: { conversationId: string; event: AgentEvent }) => void): () => void
   onPermissionRequest(cb: (req: PermissionRequest) => void): () => void
   onTerminalEvent(cb: (e: TerminalEvent) => void): () => void

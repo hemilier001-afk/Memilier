@@ -279,6 +279,16 @@ export async function runAgent(opts: RunOptions): Promise<void> {
     conversationId,
     skillDirs: pluginSkillDirs,
     recordDiff: (p: string, before: string, after: string) => {
+      // 大文件改动只发统计占位：几 MB 的 before/after 会撑爆渲染端内存与 Diff 面板
+      const MAX_DIFF_CHARS = 400_000
+      if (before.length + after.length > MAX_DIFF_CHARS) {
+        const note = `（文件过大，不展示逐行 diff：改动前 ${before.length} 字符 → 改动后 ${after.length} 字符）`
+        send({
+          type: 'diff',
+          entry: { id: randomUUID(), path: p, before: '', after: note, at: Date.now() }
+        })
+        return
+      }
       send({ type: 'diff', entry: { id: randomUUID(), path: p, before, after, at: Date.now() } })
     },
     setPlan: (steps: import('@shared/types').PlanStep[]) => {
@@ -327,6 +337,7 @@ export async function runAgent(opts: RunOptions): Promise<void> {
       conv.updatedAt = Date.now()
       store.saveConversation(conv)
       send({ type: 'message', message: assistantMsg })
+      partial = '' // 本轮内容已落库；防止工具阶段抛错+中止时把它重复存成「已停止」消息
 
       if (!toolCalls.length) {
         send({ type: 'done' })

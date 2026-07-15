@@ -249,7 +249,8 @@ function RunningBadge(): JSX.Element | null {
     const target = conversations.find((c) => c.id === others[0])
     if (!target) return
     const st = useStore.getState()
-    if ((target.kind ?? 'chat') !== view) st.setView(target.kind ?? 'chat')
+    if ((target.kind ?? 'chat') !== view)
+      st.setView(target.kind ?? 'chat', { skipAutoSelect: true })
     void st.selectConversation(target.id)
   }
   return (
@@ -717,9 +718,12 @@ function Composer(): JSX.Element {
         e.preventDefault()
         const dropped = Array.from(e.dataTransfer.files)
         addImagesFromFiles(dropped) // 图片 → 缩略图附件
-        // 非图片文件：读入文本作为附件插入（上限 100k）
+        // 非图片文件：仅接受文本类文件（按 MIME/扩展名白名单），避免二进制读成乱码插入
+        const TEXT_EXT =
+          /\.(md|txt|json|csv|tsv|log|js|ts|tsx|jsx|py|java|c|cpp|h|html?|css|xml|ya?ml|toml|ini|sh|sql|rs|go|rb|vue|svelte)$/i
         for (const f of dropped) {
           if (f.type.startsWith('image/') || f.size > 5 * 1024 * 1024) continue
+          if (!f.type.startsWith('text/') && !TEXT_EXT.test(f.name)) continue
           const reader = new FileReader()
           reader.onload = () => {
             if (typeof reader.result !== 'string') return

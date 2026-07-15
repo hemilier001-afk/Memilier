@@ -213,6 +213,9 @@ export function SettingsModal(): JSX.Element | null {
                     <option value="zh">中文</option>
                     <option value="en">English</option>
                   </select>
+                  <p className="mt-1 text-xs text-muted">
+                    English 界面覆盖主要区域；较新的功能界面暂以中文为准，将逐步补全。
+                  </p>
                 </div>
                 <div>
                   <label className="mb-1 block font-medium">{t('theme')}</label>

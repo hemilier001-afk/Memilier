@@ -4,6 +4,7 @@ import { basename, dirname } from 'node:path'
 import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from 'electron'
 import type {
   AgentEvent,
+  Conversation,
   FsEntry,
   GitFile,
   GitStatus,
@@ -375,6 +376,11 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     }
   })
 
+  // 渲染进程错误上报：白屏/异常写入 userData/main.log（console.error 已被 setupLogging 挂钩）
+  ipcMain.on('log:renderer', (_e, msg: string) => {
+    console.error('[renderer]', String(msg).slice(0, 4000))
+  })
+
   ipcMain.handle('conversations:setPinned', (_e, id: string, pinned: boolean) =>
     store.setConversationPinned(id, pinned)
   )
@@ -525,6 +531,26 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   // /compact：把较早的对话历史压缩成摘要，只保留最近几条 + 摘要，腾出上下文窗口
   ipcMain.handle('conversations:compact', async (_e, id: string) => {
     if (running.get(id)) return { ok: false, error: '正在生成中，请先停止再压缩' }
+    // 压缩期间占住 running 槽位：若用户此刻点发送，runConversation 会先 await 我们再开始，
+    // 避免运行中的循环持有被替换前的旧 messages 数组（丢/重消息）
+    const box: { done?: () => void } = {}
+    running.set(
+      id,
+      new Promise<void>((resolve) => {
+        box.done = resolve
+      })
+    )
+    try {
+      return await compactConversation(id)
+    } finally {
+      running.delete(id)
+      box.done?.()
+    }
+  })
+
+  async function compactConversation(
+    id: string
+  ): Promise<{ ok: boolean; conversation?: Conversation; error?: string }> {
     const conv = store.getConversation(id)
     if (!conv) return { ok: false, error: '对话不存在' }
     const KEEP = 4 // 保留最近 4 条原文
@@ -574,5 +600,5 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : String(e) }
     }
-  })
+  }
 }

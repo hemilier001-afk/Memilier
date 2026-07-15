@@ -96,7 +96,7 @@ interface UIState {
   deleteRoutine: (id: string) => Promise<void>
   runRoutineNow: (id: string) => Promise<void>
   openTaskConversation: (conversationId: string) => Promise<void>
-  setView: (view: View) => void
+  setView: (view: View, opts?: { skipAutoSelect?: boolean }) => void
   toggleSidebar: () => void
   setSidebarCollapsed: (v: boolean) => void
   setToolView: (mode: ToolView) => void
@@ -451,7 +451,7 @@ export const useStore = create<UIState>((set, get) => ({
     set({ permissionQueue: rest, permission: rest[0] ?? null })
   },
 
-  setView: (view) => {
+  setView: (view, opts) => {
     // 切换空间时载入该空间自己的最近对话，互不干扰
     const next = get().conversations.find((c) => (c.kind ?? 'chat') === view)
     set({
@@ -467,8 +467,9 @@ export const useStore = create<UIState>((set, get) => ({
       terminalOutput: '',
       terminalRunning: false
     })
-    // 列表是轻量摘要（不含 messages），需按 id 拉取完整会话
-    if (next) void get().selectConversation(next.id)
+    // 列表是轻量摘要（不含 messages），需按 id 拉取完整会话。
+    // skipAutoSelect：调用方随后会自己 selectConversation（如运行徽标跳转），避免两次选中竞态
+    if (next && !opts?.skipAutoSelect) void get().selectConversation(next.id)
   },
 
   toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),

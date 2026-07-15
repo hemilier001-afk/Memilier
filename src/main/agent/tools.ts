@@ -460,8 +460,8 @@ const browserOpen: Tool = {
     },
     required: ['url']
   },
-  async execute({ url }) {
-    const title = await browserManager.open(url)
+  async execute({ url }, ctx) {
+    const title = await browserManager.open(ctx.conversationId ?? 'default', url)
     return `已打开：${url}（标题：${title || '(无)'}）。可用 browser_snapshot 读取页面、browser_console 查看控制台。`
   }
 }
@@ -472,8 +472,8 @@ const browserSnapshot: Tool = {
   sideEffect: 'none',
   schema: z.object({}),
   parameters: { type: 'object', properties: {} },
-  async execute() {
-    return browserManager.snapshot()
+  async execute(_args, ctx) {
+    return browserManager.snapshot(ctx.conversationId ?? 'default')
   }
 }
 
@@ -484,8 +484,8 @@ const browserConsole: Tool = {
   sideEffect: 'none',
   schema: z.object({}),
   parameters: { type: 'object', properties: {} },
-  async execute() {
-    return browserManager.consoleLogs()
+  async execute(_args, ctx) {
+    return browserManager.consoleLogs(ctx.conversationId ?? 'default')
   }
 }
 
@@ -499,8 +499,8 @@ const browserClick: Tool = {
     properties: { selector: { type: 'string', description: 'CSS 选择器，如 #submit、.btn' } },
     required: ['selector']
   },
-  async execute({ selector }) {
-    return browserManager.click(selector)
+  async execute({ selector }, ctx) {
+    return browserManager.click(ctx.conversationId ?? 'default', selector)
   }
 }
 
@@ -518,8 +518,8 @@ const browserFill: Tool = {
     },
     required: ['selector', 'text']
   },
-  async execute({ selector, text }) {
-    return browserManager.fill(selector, text)
+  async execute({ selector, text }, ctx) {
+    return browserManager.fill(ctx.conversationId ?? 'default', selector, text)
   }
 }
 
@@ -531,7 +531,7 @@ const browserScreenshot: Tool = {
   schema: z.object({}),
   parameters: { type: 'object', properties: {} },
   async execute(_args, ctx) {
-    const png = await browserManager.screenshot()
+    const png = await browserManager.screenshot(ctx.conversationId ?? 'default')
     const rel = path.join('.hemilier', 'screenshots', `shot-${Date.now()}.png`)
     const abs = resolveInWorkspace(ctx.workspace, rel)
     await fs.mkdir(path.dirname(abs), { recursive: true })
