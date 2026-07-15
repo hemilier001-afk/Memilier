@@ -1,5 +1,5 @@
 appId: com.hemilier.desktop
-productName: Hemilier
+productName: hemilier
 # 使用本地已解压的 Electron，避免 electron-builder 联网重新下载二进制
 electronDist: node_modules/electron/dist
 directories:

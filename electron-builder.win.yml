@@ -1,5 +1,5 @@
 appId: com.hemilier.desktop
-productName: Hemilier
+productName: hemilier
 # 不设置 electronDist：让 electron-builder 自行下载 Windows 版 Electron 二进制
 directories:
   output: dist

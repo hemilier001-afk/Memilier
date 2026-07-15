@@ -25,7 +25,7 @@ function StarterPrompts(): JSX.Element {
   if (unconfigured) {
     return (
       <div className="mt-12 text-center">
-        <p className="mb-2 text-lg font-medium text-fg">👋 欢迎使用 Hemilier</p>
+        <p className="mb-2 text-lg font-medium text-fg">👋 欢迎使用 hemilier</p>
         <p className="mb-5 text-sm text-muted">开始对话前，先接入一个模型（三步，约 1 分钟）</p>
         <ol className="mx-auto mb-5 max-w-md space-y-2 text-left text-sm text-muted">
           <li>1. 打开设置 → 模型，添加提供方（推荐 DeepSeek）</li>
@@ -233,6 +233,34 @@ function renderGrouped(
   }
   flush()
   return items
+}
+
+// 其它会话正在后台生成时的头部徽标：并行任务一眼可见，点击跳转过去（跨空间自动切换）
+function RunningBadge(): JSX.Element | null {
+  const runningIds = useStore((s) => s.runningIds)
+  const active = useStore((s) => s.active)
+  const conversations = useStore((s) => s.conversations)
+  const view = useStore((s) => s.view)
+  const others = runningIds.filter((id) => id !== active?.id)
+  if (others.length === 0) return null
+
+  const jump = (): void => {
+    const target = conversations.find((c) => c.id === others[0])
+    if (!target) return
+    const st = useStore.getState()
+    if ((target.kind ?? 'chat') !== view) st.setView(target.kind ?? 'chat')
+    void st.selectConversation(target.id)
+  }
+  return (
+    <button
+      onClick={jump}
+      title="其它会话正在生成，点击跳转查看"
+      className="flex items-center gap-1.5 rounded-full border border-accent/40 bg-accent-soft px-2.5 py-0.5 text-xs text-accent transition hover:border-accent"
+    >
+      <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-accent" />
+      {others.length} 个会话运行中
+    </button>
+  )
 }
 
 // 头部「⋯」溢出菜单：收纳低频操作，避免图标堆挤
@@ -965,6 +993,7 @@ export function ChatView(): JSX.Element {
       <header className="region-drag flex items-center justify-between gap-3 border-b border-line px-4 py-2 pt-10">
         <h1 className="min-w-0 truncate text-sm font-medium text-fg">{active.title}</h1>
         <div className="flex items-center gap-3">
+          <RunningBadge />
           <TokenMeter />
           <ViewModeToggle />
           {view === 'chat' && <WorkspacePicker dir={active.workspaceDir} />}

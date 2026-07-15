@@ -30,8 +30,8 @@ function setupLogging(): void {
 
 let mainWindow: BrowserWindow | null = null
 
-// 应用名：开发模式下 Electron 默认显示 "Electron"，统一改为 Hemilier（菜单栏/关于/Dock）
-app.setName('Hemilier')
+// 应用名：开发模式下 Electron 默认显示 "Electron"，统一改为 hemilier（菜单栏/关于/Dock）
+app.setName('hemilier')
 
 // 单实例锁：避免开两个实例同时读写同一份 JSON 数据导致损坏
 const gotSingleInstanceLock = app.requestSingleInstanceLock()
@@ -130,7 +130,7 @@ function createWindow(): void {
     minWidth: 800,
     minHeight: 600,
     show: false,
-    title: 'Hemilier',
+    title: 'hemilier',
     ...(icon ? { icon } : {}),
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     backgroundColor: '#1a1a1a',

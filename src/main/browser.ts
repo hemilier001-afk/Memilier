@@ -24,7 +24,7 @@ class BrowserManager {
     const win = new BrowserWindow({
       width: 1100,
       height: 800,
-      title: 'Hemilier 浏览器（智能体控制）',
+      title: 'hemilier 浏览器（智能体控制）',
       webPreferences: {
         sandbox: true,
         contextIsolation: true,

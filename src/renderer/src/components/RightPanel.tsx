@@ -213,13 +213,17 @@ function PreviewView(): JSX.Element {
   const preview = useStore((s) => s.preview)
   const active = useStore((s) => s.active)
   const setPreviewContent = useStore((s) => s.setPreviewContent)
-  const [mode, setMode] = useState<'view' | 'edit'>('view')
+  const [mode, setMode] = useState<'view' | 'edit' | 'render'>('view')
   const [draft, setDraft] = useState('')
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
     setDraft(preview?.content ?? '')
-    setMode('view')
+    // HTML 文件默认渲染出来看效果（截断的大文件除外），其余文件默认源码视图
+    const e = preview?.path.split('.').pop()?.toLowerCase() ?? ''
+    const canRender =
+      (e === 'html' || e === 'htm') && !(preview?.content.includes('…（已截断）') ?? false)
+    setMode(canRender ? 'render' : 'view')
   }, [preview?.path, preview?.content])
 
   if (!preview) {
@@ -228,6 +232,7 @@ function PreviewView(): JSX.Element {
 
   const ext = preview.path.split('.').pop()?.toLowerCase() ?? ''
   const isMd = ext === 'md' || ext === 'markdown'
+  const isHtml = ext === 'html' || ext === 'htm'
   const truncated = preview.content.includes('…（已截断）')
   const dirty = draft !== preview.content
   const text = isMd ? preview.content : `\`\`\`${ext}\n${preview.content}\n\`\`\``
@@ -258,13 +263,23 @@ function PreviewView(): JSX.Element {
               {saving ? '保存中' : dirty ? '保存' : '已保存'}
             </button>
           )}
+          {isHtml && !truncated && mode !== 'edit' && (
+            <button
+              onClick={() => setMode(mode === 'render' ? 'view' : 'render')}
+              className="rounded-md border border-line px-2 py-0.5 text-muted transition hover:text-fg"
+            >
+              {mode === 'render' ? '源码' : '渲染'}
+            </button>
+          )}
           <button
-            onClick={() => setMode(mode === 'view' ? 'edit' : 'view')}
+            onClick={() =>
+              setMode(mode === 'edit' ? (isHtml && !truncated ? 'render' : 'view') : 'edit')
+            }
             disabled={truncated}
             title={truncated ? '文件过大已截断，不能编辑' : ''}
             className="rounded-md border border-line px-2 py-0.5 text-muted transition hover:text-fg disabled:opacity-40"
           >
-            {mode === 'view' ? '编辑' : '预览'}
+            {mode === 'edit' ? '预览' : '编辑'}
           </button>
         </div>
       </div>
@@ -275,6 +290,16 @@ function PreviewView(): JSX.Element {
           onChange={(e) => setDraft(e.target.value)}
           spellCheck={false}
           className="min-h-0 flex-1 resize-none bg-paper p-3 font-mono text-xs text-fg outline-none"
+        />
+      ) : mode === 'render' ? (
+        // 沙箱 iframe 渲染（allow-scripts 但无 same-origin，页面拿不到应用上下文）。
+        // 注意：打包版受应用 CSP（script-src 'self'）约束，srcDoc 继承之 → 内联脚本不执行，
+        // 即静态渲染（样式正常）；开发模式无 CSP，脚本可运行。带 JS 的页面用 browser_open 看。
+        <iframe
+          title="html-preview"
+          sandbox="allow-scripts"
+          srcDoc={preview.content}
+          className="min-h-0 flex-1 border-0 bg-white"
         />
       ) : (
         <div className="min-h-0 flex-1 overflow-auto p-3">

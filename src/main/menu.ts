@@ -11,19 +11,19 @@ export function setupAppMenu(getWindow: () => BrowserWindow | null): void {
   const appMenu: MenuItemConstructorOptions[] = isMac
     ? [
         {
-          label: 'Hemilier',
+          label: 'hemilier',
           submenu: [
-            { role: 'about', label: '关于 Hemilier' },
+            { role: 'about', label: '关于 hemilier' },
             sep,
             { label: '设置…', accelerator: 'Cmd+,', click: () => send('settings') },
             sep,
             { role: 'services' },
             sep,
-            { role: 'hide', label: '隐藏 Hemilier' },
+            { role: 'hide', label: '隐藏 hemilier' },
             { role: 'hideOthers', label: '隐藏其他' },
             { role: 'unhide', label: '全部显示' },
             sep,
-            { role: 'quit', label: '退出 Hemilier' }
+            { role: 'quit', label: '退出 hemilier' }
           ]
         }
       ]

@@ -39,6 +39,7 @@ function groupByTime(convs: Conversation[]): { key: TimeKey; items: Conversation
 
 function ConvRow({ c }: { c: Conversation }): JSX.Element {
   const active = useStore((s) => s.active)
+  const running = useStore((s) => s.runningIds.includes(c.id))
   const activeProjectId = useStore((s) => s.activeProjectId)
   const selectConversation = useStore((s) => s.selectConversation)
   const deleteConversation = useStore((s) => s.deleteConversation)
@@ -82,7 +83,15 @@ function ConvRow({ c }: { c: Conversation }): JSX.Element {
         active?.id === c.id ? 'bg-accent-soft text-accent' : 'text-fg hover:bg-surface'
       }`}
     >
-      <span className="truncate">{c.title}</span>
+      <span className="flex min-w-0 items-center gap-1.5">
+        {running && (
+          <span
+            title="正在生成"
+            className="inline-block h-2 w-2 shrink-0 animate-pulse rounded-full bg-accent"
+          />
+        )}
+        <span className="truncate">{c.title}</span>
+      </span>
       <span className="ml-2 hidden shrink-0 items-center gap-1 group-hover:flex">
         <button
           onClick={(e) => {
@@ -231,6 +240,7 @@ export function Sidebar(): JSX.Element {
   const collapsed = useStore((s) => s.sidebarCollapsed)
   const setCollapsed = useStore((s) => s.setSidebarCollapsed)
   const [query, setQuery] = useState('')
+  const runningIds = useStore((s) => s.runningIds)
 
   const sorted = useMemo(
     () =>
@@ -239,9 +249,12 @@ export function Sidebar(): JSX.Element {
         .filter((c) => (activeProjectId ? c.projectId === activeProjectId : true))
         .sort(
           (a, b) =>
-            Number(!!b.pinned) - Number(!!a.pinned) || (b.updatedAt || 0) - (a.updatedAt || 0)
+            // 运行中的会话置顶（并行任务一眼可见），其次置顶标记，再按最近更新
+            Number(runningIds.includes(b.id)) - Number(runningIds.includes(a.id)) ||
+            Number(!!b.pinned) - Number(!!a.pinned) ||
+            (b.updatedAt || 0) - (a.updatedAt || 0)
         ),
-    [conversations, view, activeProjectId]
+    [conversations, view, activeProjectId, runningIds]
   )
   const filtered = useMemo(
     () =>

@@ -1,5 +1,6 @@
 {
   "name": "hemilier-desktop-agent",
+  "productName": "hemilier",
   "version": "0.1.0",
   "description": "hemilier 桌面智能体，基于 Electron + Ollama / OpenAI 兼容端点",
   "main": "./out/main/index.js",
@@ -16,7 +17,8 @@
     "format:check": "prettier --check .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "package": "electron-vite build && electron-builder"
+    "package": "electron-vite build && electron-builder",
+    "postinstall": "node scripts/rename-dev-electron.cjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
