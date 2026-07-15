@@ -44,7 +44,8 @@ function main() {
   // 改完 plist 还需两步，否则 Dock 悬停名仍显示旧缓存：
   // 1) 重签名（改 Info.plist 会使原签名失效，系统可能忽略修改）
   // 2) LaunchServices 强制重注册（Dock 名读的是 LS 注册缓存，不会自动重读 plist）
-  const bundle = path.resolve(path.dirname(plist), '..', '..') // …/Electron.app
+  // plist = …/Electron.app/Contents/Info.plist → dirname 是 Contents，再上一级才是 .app 包
+  const bundle = path.resolve(path.dirname(plist), '..') // …/Electron.app
   try {
     execFileSync('/usr/bin/codesign', ['--force', '--deep', '--sign', '-', bundle])
   } catch {
