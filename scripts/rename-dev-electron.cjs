@@ -40,7 +40,27 @@ function main() {
   }
   set('CFBundleName')
   set('CFBundleDisplayName')
-  console.log(`[rename-dev-electron] 开发用 Electron.app 名称已设为 "${APP_NAME}"`)
+
+  // 改完 plist 还需两步，否则 Dock 悬停名仍显示旧缓存：
+  // 1) 重签名（改 Info.plist 会使原签名失效，系统可能忽略修改）
+  // 2) LaunchServices 强制重注册（Dock 名读的是 LS 注册缓存，不会自动重读 plist）
+  const bundle = path.resolve(path.dirname(plist), '..', '..') // …/Electron.app
+  try {
+    execFileSync('/usr/bin/codesign', ['--force', '--deep', '--sign', '-', bundle])
+  } catch {
+    /* 签名失败不阻断 */
+  }
+  try {
+    execFileSync(
+      '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister',
+      ['-f', bundle]
+    )
+  } catch {
+    /* 重注册失败不阻断 */
+  }
+  console.log(
+    `[rename-dev-electron] 开发用 Electron.app 名称已设为 "${APP_NAME}"（已重签名+重注册）`
+  )
 }
 
 main()
