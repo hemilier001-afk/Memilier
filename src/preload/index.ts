@@ -76,6 +76,7 @@ const api: Api = {
   setConversationPinned: (id, pinned) => ipcRenderer.invoke('conversations:setPinned', id, pinned),
   testProvider: (providerId) => ipcRenderer.invoke('providers:test', providerId),
   logError: (msg) => ipcRenderer.send('log:renderer', msg),
+  openUrl: (url) => ipcRenderer.invoke('shell:openUrl', url),
 
   onAgentEvent: (cb) => {
     const listener = (_e: unknown, payload: Parameters<typeof cb>[0]): void => cb(payload)
@@ -96,6 +97,11 @@ const api: Api = {
     const listener = (_e: unknown, tasks: Parameters<typeof cb>[0]): void => cb(tasks)
     ipcRenderer.on('tasks:update', listener)
     return () => ipcRenderer.removeListener('tasks:update', listener)
+  },
+  onUpdateAvailable: (cb) => {
+    const listener = (_e: unknown, info: Parameters<typeof cb>[0]): void => cb(info)
+    ipcRenderer.on('update:available', listener)
+    return () => ipcRenderer.removeListener('update:available', listener)
   },
   onMenuAction: (cb) => {
     const listener = (_e: unknown, action: string): void => cb(action)

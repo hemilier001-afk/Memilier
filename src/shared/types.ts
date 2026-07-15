@@ -347,6 +347,10 @@ export interface Api {
   testProvider(providerId: string): Promise<{ ok: boolean; note?: string; error?: string }>
   /** 渲染端错误写入主进程日志（fire-and-forget） */
   logError(msg: string): void
+  /** 用系统浏览器打开 http/https 链接 */
+  openUrl(url: string): Promise<void>
+  /** 有新版本可下载时触发（打包环境启动时检查 GitHub Release） */
+  onUpdateAvailable(cb: (info: { version: string; url: string }) => void): () => void
   onAgentEvent(cb: (payload: { conversationId: string; event: AgentEvent }) => void): () => void
   onPermissionRequest(cb: (req: PermissionRequest) => void): () => void
   onTerminalEvent(cb: (e: TerminalEvent) => void): () => void

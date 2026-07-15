@@ -180,6 +180,40 @@ function createWindow(): void {
   }
 }
 
+// 轻量更新检查：启动后查 GitHub 最新 Release，有新版则通知渲染端提示下载。
+// 便携 zip 形态没有自更新通道，至少让用户知道有新版（打包环境才检查，开发跳过）。
+function checkForUpdate(): void {
+  if (process.env['ELECTRON_RENDERER_URL']) return // 开发模式跳过
+  setTimeout(async () => {
+    try {
+      const res = await fetch(
+        'https://api.github.com/repos/hemilier001-afk/Memilier/releases/latest',
+        { headers: { Accept: 'application/vnd.github+json' }, signal: AbortSignal.timeout(8000) }
+      )
+      if (!res.ok) return
+      const data = (await res.json()) as { tag_name?: string; html_url?: string }
+      const latest = (data.tag_name ?? '').replace(/^v/, '')
+      const current = app.getVersion()
+      // 语义化版本比较：首个不同的段决定大小
+      const cmp = (a: string, b: string): number => {
+        const as = a.split('.').map(Number)
+        const bs = b.split('.').map(Number)
+        for (let i = 0; i < Math.max(as.length, bs.length); i++) {
+          const d = (as[i] ?? 0) - (bs[i] ?? 0)
+          if (d) return d
+        }
+        return 0
+      }
+      const newer = !!latest && cmp(latest, current) > 0
+      if (newer && data.html_url) {
+        mainWindow?.webContents.send('update:available', { version: latest, url: data.html_url })
+      }
+    } catch {
+      /* 网络不可达等一律静默：更新检查失败不打扰用户 */
+    }
+  }, 5000)
+}
+
 app.whenReady().then(() => {
   if (!gotSingleInstanceLock) return
   setupLogging()
@@ -197,6 +231,7 @@ app.whenReady().then(() => {
   registerIpc(() => mainWindow)
   setupAppMenu(() => mainWindow)
   createWindow()
+  checkForUpdate()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

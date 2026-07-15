@@ -376,6 +376,11 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     }
   })
 
+  // 用系统浏览器打开链接（仅 http/https，防任意协议注入）
+  ipcMain.handle('shell:openUrl', (_e, url: string) => {
+    if (/^https?:\/\//i.test(url)) void shell.openExternal(url)
+  })
+
   // 渲染进程错误上报：白屏/异常写入 userData/main.log（console.error 已被 setupLogging 挂钩）
   ipcMain.on('log:renderer', (_e, msg: string) => {
     console.error('[renderer]', String(msg).slice(0, 4000))

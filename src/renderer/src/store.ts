@@ -522,7 +522,8 @@ export const useStore = create<UIState>((set, get) => ({
   clearTerminal: () => set({ terminalOutput: '' })
 }))
 
-function handleAgentEvent(
+// 导出供单测：多会话状态机是最易回归的部分（前后台会话互不干扰的核心保证）
+export function handleAgentEvent(
   conversationId: string,
   event: AgentEvent,
   set: (partial: Partial<UIState>) => void,
