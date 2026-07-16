@@ -5,10 +5,10 @@
 /* 暖色品牌调色板（对齐 Claude：浅色为暖米白，深色为暖炭色） */
 :root {
   color-scheme: light;
-  --paper: #faf9f5;
+  --paper: #fcfbf8;
   --surface: #ffffff;
-  --surface-2: #f0eee6;
-  --line: #e8e6dc;
+  --surface-2: #f5f4ee;
+  --line: #ebe9e0;
   --fg: #1f1e1d;
   --muted: #73726c;
   --accent: #d97757;
@@ -135,16 +135,16 @@ body {
   margin: 0.8em 0;
   border-radius: 10px;
   overflow: hidden;
-  border: 1px solid #e8e6dc;
-  background: #fdfcfa;
+  border: 1px solid #ebe9e0;
+  background: #fefdfb;
 }
 .code-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 5px 12px;
-  background: #f0eee6;
-  border-bottom: 1px solid #e8e6dc;
+  background: #f5f4ee;
+  border-bottom: 1px solid #ebe9e0;
   color: #73726c;
   font-size: 11px;
   font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
