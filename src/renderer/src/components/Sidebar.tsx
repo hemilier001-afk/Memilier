@@ -428,11 +428,6 @@ export function Sidebar(): JSX.Element {
           <span className="flex items-center gap-2">
             <span>⚙</span> {t('settings')}
           </span>
-          {(active?.model || settings?.defaultModel) && (
-            <span className="max-w-[110px] truncate text-xs text-muted">
-              {(active?.model || settings?.defaultModel || '').split('::').pop()}
-            </span>
-          )}
         </button>
       </div>
     </aside>

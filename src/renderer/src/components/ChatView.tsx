@@ -97,7 +97,7 @@ function ModelSelector(): JSX.Element {
       <select
         value={active?.model || settings?.defaultModel || ''}
         onChange={(e) => setActiveModel(e.target.value)}
-        className="max-w-[200px] rounded-md border border-line bg-transparent px-2 py-1 text-sm text-fg outline-none focus:border-accent"
+        className="max-w-[180px] cursor-pointer rounded-md bg-transparent px-1 py-0.5 text-xs text-muted outline-none transition hover:text-fg"
       >
         {models.length === 0 && <option value="">无可用模型</option>}
         {Object.entries(groups).map(([provider, list]) => (
@@ -113,7 +113,7 @@ function ModelSelector(): JSX.Element {
       <button
         onClick={() => void refreshModels()}
         title={t('refreshModels')}
-        className="text-sm text-muted transition hover:text-fg"
+        className="text-xs text-muted transition hover:text-fg"
       >
         ↻
       </button>
@@ -869,32 +869,35 @@ function Composer(): JSX.Element {
               <ModeMenu />
               <MicButton onAppend={(t) => onChange(text + t)} />
             </div>
-            {streaming ? (
-              <button
-                onClick={abort}
-                title={t('stop')}
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-line text-fg transition hover:bg-surface-2"
-              >
-                <span className="block h-2.5 w-2.5 rounded-[2px] bg-current" />
-              </button>
-            ) : (
-              <button
-                onClick={submit}
-                title={editingId ? t('resend') : t('send')}
-                disabled={!active || (!text.trim() && images.length === 0)}
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent text-white transition hover:bg-accent-hover disabled:opacity-40"
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                  <path
-                    d="M12 19V5M12 5l-6 6M12 5l6 6"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              </button>
-            )}
+            <div className="flex items-center gap-2">
+              <ModelSelector />
+              {streaming ? (
+                <button
+                  onClick={abort}
+                  title={t('stop')}
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-line text-fg transition hover:bg-surface-2"
+                >
+                  <span className="block h-2.5 w-2.5 rounded-[2px] bg-current" />
+                </button>
+              ) : (
+                <button
+                  onClick={submit}
+                  title={editingId ? t('resend') : t('send')}
+                  disabled={!active || (!text.trim() && images.length === 0)}
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent text-white transition hover:bg-accent-hover disabled:opacity-40"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path
+                      d="M12 19V5M12 5l-6 6M12 5l6 6"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -1002,7 +1005,6 @@ export function ChatView(): JSX.Element {
           <RunningBadge />
           <TokenMeter />
           {view === 'chat' && <WorkspacePicker dir={active.workspaceDir} />}
-          <ModelSelector />
           <HeaderMenu disabled={active.messages.length === 0} streaming={streaming} />
           {view !== 'chat' && <PanelToggle />}
         </div>
