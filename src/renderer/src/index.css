@@ -177,9 +177,17 @@ body {
   padding: 0.3em 0.6em;
 }
 
-/* 衬线展示字体：问候语/空状态大标题用（Claude 的招牌视觉元素之一） */
+/* 展示字体：拉丁字母用衬线（Claude 的招牌视觉），中文回退到系统黑体——
+   Georgia 无汉字，若回退宋体会与标点/英文风格打架（粗细、基线不一致，Windows 上更难看） */
 .font-display {
-  font-family: Georgia, 'Times New Roman', 'Songti SC', 'SimSun', serif;
+  font-family:
+    Georgia,
+    'Times New Roman',
+    -apple-system,
+    BlinkMacSystemFont,
+    'PingFang SC',
+    'Microsoft YaHei',
+    serif;
   letter-spacing: 0.01em;
 }
 
