@@ -177,17 +177,11 @@ body {
   padding: 0.3em 0.6em;
 }
 
-/* 展示字体：拉丁字母用衬线（Claude 的招牌视觉），中文回退到系统黑体——
-   Georgia 无汉字，若回退宋体会与标点/英文风格打架（粗细、基线不一致，Windows 上更难看） */
+/* 展示字体：拉丁字母用衬线（Claude 的招牌视觉），中文与全角标点回退到中文黑体。
+   注意：链里不能放 -apple-system——SF 含全角标点字形但无汉字，会把「？」抢走
+   导致标点与汉字风格打架；直接 Georgia → 苹方/雅黑，保证汉字和全角标点同源。 */
 .font-display {
-  font-family:
-    Georgia,
-    'Times New Roman',
-    -apple-system,
-    BlinkMacSystemFont,
-    'PingFang SC',
-    'Microsoft YaHei',
-    serif;
+  font-family: Georgia, 'Times New Roman', 'PingFang SC', 'Microsoft YaHei', serif;
   letter-spacing: 0.01em;
 }
 
