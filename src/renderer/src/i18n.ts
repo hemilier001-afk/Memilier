@@ -209,6 +209,71 @@ const DICT: Dict = {
   starter1: { zh: '列出当前工作区的文件结构', en: 'List the files in my workspace' },
   starter2: { zh: '在工作区里搜索 TODO 注释', en: 'Search the workspace for TODO comments' },
   starter3: { zh: '创建一个 hello.txt，写入一句问候', en: 'Create hello.txt with a greeting' },
+  // 右侧工作区
+  wsPanel: { zh: '工作区', en: 'Workspace' },
+  wsChange: { zh: '切换', en: 'Change' },
+  closePanel: { zh: '关闭面板', en: 'Close panel' },
+  openConvFirst: { zh: '请先打开一个对话。', en: 'Open a conversation first.' },
+  emptyDir: { zh: '（空）', en: '(empty)' },
+  previewHint: {
+    zh: '在 Files 中点击一个文件查看预览。',
+    en: 'Click a file in Files to preview it.'
+  },
+  saving: { zh: '保存中', en: 'Saving' },
+  saved: { zh: '已保存', en: 'Saved' },
+  sourceBtn: { zh: '源码', en: 'Source' },
+  renderBtn: { zh: '渲染', en: 'Render' },
+  previewBtn: { zh: '预览', en: 'Preview' },
+  editBtn: { zh: '编辑', en: 'Edit' },
+  tooLargeToEdit: { zh: '文件过大已截断，不能编辑', en: 'File truncated — too large to edit' },
+  diffEmpty: {
+    zh: '本次会话还没有文件改动。智能体写入/编辑文件后会在这里显示 diff。',
+    en: 'No file changes yet. Diffs appear here when the agent writes or edits files.'
+  },
+  diffBinary: {
+    zh: '无 diff（可能是未跟踪的新文件，或二进制文件）。',
+    en: 'No diff (new untracked file or binary).'
+  },
+  planEmpty: {
+    zh: '还没有计划。面对多步骤任务时，智能体会用 update_plan 列出步骤并在此实时更新。',
+    en: 'No plan yet. For multi-step tasks the agent lists steps via update_plan and updates them here.'
+  },
+  termHint: {
+    zh: '在当前对话的工作区执行命令，输出显示在这里。',
+    en: 'Run commands in this conversation’s workspace; output shows here.'
+  },
+  termPh: { zh: '输入命令，回车执行', en: 'Type a command, Enter to run' },
+  termRun: { zh: '运行', en: 'Run' },
+  termStop: { zh: '停止', en: 'Stop' },
+  termClear: { zh: '清空', en: 'Clear' },
+  termClearTip: { zh: '清空输出', en: 'Clear output' },
+  gitReading: { zh: '读取 Git 状态…', en: 'Reading Git status…' },
+  gitNotRepo: { zh: '当前工作区不是 Git 仓库。', en: 'This workspace is not a Git repository.' },
+  gitInit: { zh: '初始化 Git 仓库', en: 'Initialize Git repository' },
+  gitBranch: { zh: '分支', en: 'Branch' },
+  gitRefresh: { zh: '刷新', en: 'Refresh' },
+  gitClean: { zh: '工作区干净，没有改动。', en: 'Working tree clean — no changes.' },
+  gitStaged: { zh: '已暂存', en: 'Staged' },
+  gitChanges: { zh: '更改', en: 'Changes' },
+  gitStage: { zh: '暂存', en: 'Stage' },
+  gitUnstage: { zh: '取消暂存', en: 'Unstage' },
+  gitMsgPh: { zh: '提交信息…', en: 'Commit message…' },
+  gitCommitting: { zh: '提交中…', en: 'Committing…' },
+  gitCommit: { zh: '提交', en: 'Commit' },
+  gitCommitFail: { zh: '提交失败', en: 'Commit failed' },
+  memHint: {
+    zh: '项目记忆（跨对话长期条目，每次注入给智能体；智能体也会用 add_memory / forget_memory 维护）',
+    en: 'Project memory — long-lived entries injected into every run; the agent also maintains them via add_memory / forget_memory.'
+  },
+  memEmpty: { zh: '还没有记忆条目。', en: 'No memory entries yet.' },
+  memStale: { zh: '⚠较旧', en: '⚠ stale' },
+  memAddPh: { zh: '新增一条记忆，回车保存', en: 'Add a memory, Enter to save' },
+  memAdd: { zh: '添加', en: 'Add' },
+  memFact: { zh: '事实', en: 'Fact' },
+  memPreference: { zh: '偏好', en: 'Preference' },
+  memDecision: { zh: '决策', en: 'Decision' },
+  memPitfall: { zh: '坑', en: 'Pitfall' },
+  memTodo: { zh: '待办', en: 'To-do' },
   starter4: {
     zh: '这个项目是做什么的？帮我快速梳理一下',
     en: 'What does this project do? Give me a quick tour'

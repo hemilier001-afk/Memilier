@@ -4,20 +4,22 @@ import { diffStat, lineDiff } from '@shared/diff'
 import { useStore } from '../store'
 import { Markdown } from './Message'
 import { FolderIcon, FolderOpenIcon, FileIcon } from './icons'
+import { useT } from '../i18n'
 
 type RightTab = 'files' | 'preview' | 'diff' | 'plan' | 'terminal' | 'git' | 'memory'
 
 const MEM_TYPES: { key: MemoryType; label: string }[] = [
-  { key: 'fact', label: '事实' },
-  { key: 'preference', label: '偏好' },
-  { key: 'decision', label: '决策' },
-  { key: 'pitfall', label: '坑' },
-  { key: 'todo', label: '待办' }
+  { key: 'fact', label: 'memFact' },
+  { key: 'preference', label: 'memPreference' },
+  { key: 'decision', label: 'memDecision' },
+  { key: 'pitfall', label: 'memPitfall' },
+  { key: 'todo', label: 'memTodo' }
 ]
 const MEM_LABEL: Record<string, string> = Object.fromEntries(MEM_TYPES.map((t) => [t.key, t.label]))
 const STALE_MS = 30 * 86_400_000
 
 function MemoryView(): JSX.Element {
+  const t = useT() as unknown as (k: string) => string
   const active = useStore((s) => s.active)
   const ws = active?.workspaceDir
   const [entries, setEntries] = useState<MemoryEntry[]>([])
@@ -33,7 +35,7 @@ function MemoryView(): JSX.Element {
     void refresh()
   }, [refresh])
 
-  if (!active) return <div className="p-4 text-sm text-muted">请先打开一个对话。</div>
+  if (!active) return <div className="p-4 text-sm text-muted">{t('openConvFirst')}</div>
 
   const add = async (): Promise<void> => {
     if (!text.trim() || !ws) return
@@ -50,13 +52,11 @@ function MemoryView(): JSX.Element {
   const now = Date.now()
   return (
     <div className="flex h-full flex-col">
-      <div className="border-b border-line px-3 py-1.5 text-[11px] text-muted">
-        项目记忆（跨对话长期条目，每次注入给智能体；智能体也会用 add_memory / forget_memory 维护）
-      </div>
+      <div className="border-b border-line px-3 py-1.5 text-[11px] text-muted">{t('memHint')}</div>
 
       <div className="min-h-0 flex-1 overflow-auto p-2">
         {entries.length === 0 && (
-          <p className="p-3 text-center text-xs text-muted">还没有记忆条目。</p>
+          <p className="p-3 text-center text-xs text-muted">{t('memEmpty')}</p>
         )}
         {entries.map((e) => {
           const stale = now - e.createdAt > STALE_MS
@@ -67,15 +67,15 @@ function MemoryView(): JSX.Element {
             >
               <div className="mb-0.5 flex items-center gap-1.5 text-[11px] text-muted">
                 <span className="rounded bg-accent-soft px-1.5 text-accent">
-                  {MEM_LABEL[e.type] ?? e.type}
+                  {t(MEM_LABEL[e.type] ?? e.type)}
                 </span>
                 <span>{new Date(e.createdAt).toLocaleDateString()}</span>
-                {stale && <span className="text-muted">⚠较旧</span>}
+                {stale && <span className="text-muted">{t('memStale')}</span>}
                 {e.source && <span className="truncate">· {e.source}</span>}
                 <button
                   onClick={() => void forget(e.id)}
                   className="ml-auto hidden text-muted hover:text-red-500 group-hover:inline"
-                  title="删除"
+                  title={t('deleteChat')}
                 >
                   ✕
                 </button>
@@ -92,9 +92,9 @@ function MemoryView(): JSX.Element {
           onChange={(e) => setType(e.target.value as MemoryType)}
           className="shrink-0 rounded-md border border-line bg-transparent px-1 py-1 text-xs"
         >
-          {MEM_TYPES.map((t) => (
-            <option key={t.key} value={t.key}>
-              {t.label}
+          {MEM_TYPES.map((m) => (
+            <option key={m.key} value={m.key}>
+              {t(m.label)}
             </option>
           ))}
         </select>
@@ -104,14 +104,14 @@ function MemoryView(): JSX.Element {
           onKeyDown={(e) => {
             if (e.key === 'Enter') void add()
           }}
-          placeholder="新增一条记忆，回车保存"
+          placeholder={t('memAddPh')}
           className="flex-1 rounded-md border border-line bg-surface px-2 py-1 text-xs outline-none focus:border-accent"
         />
         <button
           onClick={() => void add()}
           className="shrink-0 rounded-md bg-accent px-2 py-1 text-xs text-white hover:bg-accent-hover"
         >
-          添加
+          {t('memAdd')}
         </button>
       </div>
     </div>
@@ -127,6 +127,7 @@ function DirView({
   dir: string
   depth: number
 }): JSX.Element {
+  const t = useT()
   const [entries, setEntries] = useState<FsEntry[] | null>(null)
 
   useEffect(() => {
@@ -149,7 +150,7 @@ function DirView({
   if (entries.length === 0)
     return (
       <div style={{ paddingLeft: 8 + depth * 12 }} className="py-1 text-xs text-muted">
-        （空）
+        {t('emptyDir')}
       </div>
     )
 
@@ -215,6 +216,7 @@ function Entry({
 }
 
 function PreviewView(): JSX.Element {
+  const t = useT()
   const preview = useStore((s) => s.preview)
   const active = useStore((s) => s.active)
   const setPreviewContent = useStore((s) => s.setPreviewContent)
@@ -232,7 +234,7 @@ function PreviewView(): JSX.Element {
   }, [preview?.path, preview?.content])
 
   if (!preview) {
-    return <div className="p-4 text-sm text-muted">在 Files 中点击一个文件查看预览。</div>
+    return <div className="p-4 text-sm text-muted">{t('previewHint')}</div>
   }
 
   const ext = preview.path.split('.').pop()?.toLowerCase() ?? ''
@@ -265,7 +267,7 @@ function PreviewView(): JSX.Element {
               disabled={!dirty || saving}
               className="rounded-md bg-accent px-2 py-0.5 text-white transition hover:bg-accent-hover disabled:opacity-40"
             >
-              {saving ? '保存中' : dirty ? '保存' : '已保存'}
+              {saving ? t('saving') : dirty ? t('save') : t('saved')}
             </button>
           )}
           {isHtml && !truncated && mode !== 'edit' && (
@@ -273,7 +275,7 @@ function PreviewView(): JSX.Element {
               onClick={() => setMode(mode === 'render' ? 'view' : 'render')}
               className="rounded-md border border-line px-2 py-0.5 text-muted transition hover:text-fg"
             >
-              {mode === 'render' ? '源码' : '渲染'}
+              {mode === 'render' ? t('sourceBtn') : t('renderBtn')}
             </button>
           )}
           <button
@@ -281,10 +283,10 @@ function PreviewView(): JSX.Element {
               setMode(mode === 'edit' ? (isHtml && !truncated ? 'render' : 'view') : 'edit')
             }
             disabled={truncated}
-            title={truncated ? '文件过大已截断，不能编辑' : ''}
+            title={truncated ? t('tooLargeToEdit') : ''}
             className="rounded-md border border-line px-2 py-0.5 text-muted transition hover:text-fg disabled:opacity-40"
           >
-            {mode === 'edit' ? '预览' : '编辑'}
+            {mode === 'edit' ? t('previewBtn') : t('editBtn')}
           </button>
         </div>
       </div>
@@ -318,13 +320,10 @@ function PreviewView(): JSX.Element {
 }
 
 function DiffView(): JSX.Element {
+  const t = useT()
   const diffs = useStore((s) => s.diffs)
   if (!diffs.length) {
-    return (
-      <div className="p-4 text-sm text-muted">
-        本次会话还没有文件改动。智能体写入/编辑文件后会在这里显示 diff。
-      </div>
-    )
+    return <div className="p-4 text-sm text-muted">{t('diffEmpty')}</div>
   }
   return (
     <div className="space-y-3 p-2">
@@ -372,13 +371,10 @@ function DiffView(): JSX.Element {
 const PLAN_ICON: Record<string, string> = { pending: '○', in_progress: '◐', done: '●' }
 
 function PlanView(): JSX.Element {
+  const t = useT()
   const plan = useStore((s) => s.plan)
   if (!plan.length) {
-    return (
-      <div className="p-4 text-sm text-muted">
-        还没有计划。面对多步骤任务时，智能体会用 update_plan 列出步骤并在此实时更新。
-      </div>
-    )
+    return <div className="p-4 text-sm text-muted">{t('planEmpty')}</div>
   }
   return (
     <ul className="space-y-2 p-3 text-sm">
@@ -405,6 +401,7 @@ function PlanView(): JSX.Element {
 }
 
 function TerminalView(): JSX.Element {
+  const t = useT()
   const output = useStore((s) => s.terminalOutput)
   const running = useStore((s) => s.terminalRunning)
   const run = useStore((s) => s.runTerminal)
@@ -429,7 +426,7 @@ function TerminalView(): JSX.Element {
         ref={ref}
         className="flex-1 overflow-auto whitespace-pre-wrap bg-paper p-2 font-mono text-xs text-fg"
       >
-        {output || '在当前对话的工作区执行命令，输出显示在这里。'}
+        {output || t('termHint')}
       </pre>
       <div className="flex items-center gap-1 border-t border-line p-2">
         <input
@@ -441,7 +438,7 @@ function TerminalView(): JSX.Element {
               submit()
             }
           }}
-          placeholder="输入命令，回车执行"
+          placeholder={t('termPh')}
           className="flex-1 rounded-md border border-line bg-surface px-2 py-1 font-mono text-xs outline-none focus:border-accent"
         />
         {running ? (
@@ -449,22 +446,22 @@ function TerminalView(): JSX.Element {
             onClick={kill}
             className="rounded-md border border-line px-2 py-1 text-xs text-fg hover:bg-surface-2"
           >
-            停止
+            {t('termStop')}
           </button>
         ) : (
           <button
             onClick={submit}
             className="rounded-md bg-accent px-2 py-1 text-xs text-white hover:bg-accent-hover"
           >
-            运行
+            {t('termRun')}
           </button>
         )}
         <button
           onClick={clear}
-          title="清空输出"
+          title={t('termClearTip')}
           className="rounded-md border border-line px-2 py-1 text-xs text-muted hover:text-fg"
         >
-          清空
+          {t('termClear')}
         </button>
       </div>
     </div>
@@ -472,10 +469,9 @@ function TerminalView(): JSX.Element {
 }
 
 function GitDiffText({ text }: { text: string }): JSX.Element {
+  const t = useT()
   if (!text.trim()) {
-    return (
-      <div className="p-3 text-xs text-muted">无 diff（可能是未跟踪的新文件，或二进制文件）。</div>
-    )
+    return <div className="p-3 text-xs text-muted">{t('diffBinary')}</div>
   }
   return (
     <pre className="overflow-auto bg-paper p-2 text-xs leading-5">
@@ -499,6 +495,7 @@ function GitDiffText({ text }: { text: string }): JSX.Element {
 }
 
 function GitView(): JSX.Element {
+  const t = useT()
   const active = useStore((s) => s.active)
   const ws = active?.workspaceDir
   const [status, setStatus] = useState<GitStatus | null>(null)
@@ -517,12 +514,12 @@ function GitView(): JSX.Element {
     void refresh()
   }, [refresh])
 
-  if (!active) return <div className="p-4 text-sm text-muted">请先打开一个对话。</div>
-  if (!status) return <div className="p-4 text-sm text-muted">读取 Git 状态…</div>
+  if (!active) return <div className="p-4 text-sm text-muted">{t('openConvFirst')}</div>
+  if (!status) return <div className="p-4 text-sm text-muted">{t('gitReading')}</div>
   if (!status.isRepo) {
     return (
       <div className="p-4 text-sm text-muted">
-        当前工作区不是 Git 仓库。
+        {t('gitNotRepo')}
         <button
           onClick={async () => {
             await window.api.gitInit(ws as string)
@@ -530,7 +527,7 @@ function GitView(): JSX.Element {
           }}
           className="mt-3 block rounded-lg bg-accent px-3 py-1.5 text-white hover:bg-accent-hover"
         >
-          初始化 Git 仓库
+          {t('gitInit')}
         </button>
       </div>
     )
@@ -567,7 +564,7 @@ function GitView(): JSX.Element {
       setDiff('')
       await refresh()
     } else {
-      setErr(r.message || '提交失败')
+      setErr(r.message || t('gitCommitFail'))
     }
   }
 
@@ -587,7 +584,7 @@ function GitView(): JSX.Element {
         }}
         className="hidden shrink-0 text-muted hover:text-accent group-hover:inline"
       >
-        {isStaged ? '取消暂存' : '暂存'}
+        {isStaged ? t('gitUnstage') : t('gitStage')}
       </button>
     </div>
   )
@@ -596,22 +593,24 @@ function GitView(): JSX.Element {
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between border-b border-line px-3 py-1.5 text-xs">
         <span className="truncate">
-          分支 <span className="font-mono text-accent">{status.branch || '—'}</span>
+          {t('gitBranch')} <span className="font-mono text-accent">{status.branch || '—'}</span>
         </span>
-        <button onClick={() => void refresh()} title="刷新" className="text-muted hover:text-fg">
+        <button
+          onClick={() => void refresh()}
+          title={t('gitRefresh')}
+          className="text-muted hover:text-fg"
+        >
           ↻
         </button>
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto">
-        {status.files.length === 0 && (
-          <div className="p-3 text-xs text-muted">工作区干净，没有改动。</div>
-        )}
+        {status.files.length === 0 && <div className="p-3 text-xs text-muted">{t('gitClean')}</div>}
 
         {staged.length > 0 && (
           <div className="px-2 pt-2">
             <div className="px-2 pb-1 text-[11px] uppercase tracking-wide text-muted">
-              已暂存 ({staged.length})
+              {t('gitStaged')} ({staged.length})
             </div>
             {staged.map((f) => (
               <Row key={`s-${f.path}`} f={f} isStaged />
@@ -622,7 +621,7 @@ function GitView(): JSX.Element {
         {changes.length > 0 && (
           <div className="px-2 pt-2">
             <div className="px-2 pb-1 text-[11px] uppercase tracking-wide text-muted">
-              更改 ({changes.length})
+              {t('gitChanges')} ({changes.length})
             </div>
             {changes.map((f) => (
               <Row key={`c-${f.path}`} f={f} isStaged={false} />
@@ -644,7 +643,7 @@ function GitView(): JSX.Element {
           value={msg}
           onChange={(e) => setMsg(e.target.value)}
           rows={2}
-          placeholder="提交信息…"
+          placeholder={t('gitMsgPh')}
           className="w-full resize-none rounded-md border border-line bg-surface px-2 py-1 text-xs outline-none focus:border-accent"
         />
         <button
@@ -652,7 +651,7 @@ function GitView(): JSX.Element {
           disabled={busy || !msg.trim() || staged.length === 0}
           className="mt-1 w-full rounded-md bg-accent px-3 py-1.5 text-xs text-white transition hover:bg-accent-hover disabled:opacity-40"
         >
-          {busy ? '提交中…' : `提交 (${staged.length})`}
+          {busy ? t('gitCommitting') : `${t('gitCommit')} (${staged.length})`}
         </button>
       </div>
     </div>
@@ -691,6 +690,7 @@ const TABS: { key: RightTab; label: string }[] = [
 ]
 
 export function RightPanel(): JSX.Element | null {
+  const t = useT()
   const open = useStore((s) => s.rightPanelOpen)
   const view = useStore((s) => s.view)
   const tab = useStore((s) => s.rightTab)
@@ -712,10 +712,10 @@ export function RightPanel(): JSX.Element | null {
   return (
     <aside className="flex w-96 flex-col border-l border-line bg-paper">
       <div className="region-drag flex items-center justify-between border-b border-line px-3 pb-1 pt-10">
-        <span className="text-sm font-semibold text-fg">工作区</span>
+        <span className="text-sm font-semibold text-fg">{t('wsPanel')}</span>
         <button
           onClick={toggle}
-          title="关闭面板"
+          title={t('closePanel')}
           className="rounded-md p-1 text-muted transition hover:bg-surface-2 hover:text-fg"
         >
           ✕
@@ -724,12 +724,12 @@ export function RightPanel(): JSX.Element | null {
       {active && (
         <button
           onClick={() => void pickActiveWorkspace()}
-          title={`工作区：${active.workspaceDir}（点击切换文件夹）`}
+          title={t('wsTip').replace('{d}', active.workspaceDir)}
           className="flex items-center gap-1.5 border-b border-line px-3 py-1.5 text-xs text-muted transition hover:text-accent"
         >
           <FolderIcon className="h-3.5 w-3.5" />
           <span className="truncate">{folder}</span>
-          <span className="ml-auto shrink-0 text-[11px]">切换</span>
+          <span className="ml-auto shrink-0 text-[11px]">{t('wsChange')}</span>
         </button>
       )}
       <div className="flex border-b border-line">
@@ -747,7 +747,7 @@ export function RightPanel(): JSX.Element | null {
               <DirView workspace={active.workspaceDir} dir="." depth={0} />
             </div>
           ) : (
-            <div className="p-4 text-sm text-muted">请先打开一个对话。</div>
+            <div className="p-4 text-sm text-muted">{t('openConvFirst')}</div>
           ))}
         {tab === 'preview' && <PreviewView />}
         {tab === 'diff' && <DiffView />}
