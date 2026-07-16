@@ -326,7 +326,7 @@ export function Sidebar(): JSX.Element {
       <div className="px-3 pt-1">
         <button
           onClick={() => void newConversation()}
-          className="flex w-full items-center gap-2 rounded-lg bg-accent px-3 py-2 text-sm font-medium text-white transition hover:bg-accent-hover"
+          className="flex w-full items-center gap-2 rounded-lg border border-line bg-surface px-3 py-2 text-sm font-medium text-fg shadow-sm transition hover:bg-surface-2"
         >
           <span className="text-base leading-none">✎</span> {t('newChat')}
         </button>
