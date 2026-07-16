@@ -1,7 +1,7 @@
 {
   "name": "hemilier-desktop-agent",
   "productName": "hemilier",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "hemilier 桌面智能体，基于 Electron + Ollama / OpenAI 兼容端点",
   "main": "./out/main/index.js",
   "author": "",
