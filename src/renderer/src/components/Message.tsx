@@ -7,6 +7,7 @@ import rehypeKatex from 'rehype-katex'
 import type { Message as Msg, ToolCall } from '@shared/types'
 import { useStore } from '../store'
 import { useT } from '../i18n'
+import { GearIcon, WrenchIcon } from './icons'
 
 // 图片可能是内联 data URL（乐观回显/旧数据）或文件引用（himg:），后者经 IPC 还原为 data URL
 function MessageImage({ source }: { source: string }): JSX.Element | null {
@@ -128,7 +129,9 @@ function ToolCallCard({ tc }: { tc: ToolCall }): JSX.Element | null {
       className="my-2 rounded-lg border border-line bg-surface-2 text-sm"
     >
       <summary className="flex cursor-pointer items-center gap-2 px-3 py-2">
-        <span className="font-mono text-xs text-accent">🛠 {tc.name}</span>
+        <span className="flex items-center gap-1 font-mono text-xs text-accent">
+          <WrenchIcon className="h-3 w-3" /> {tc.name}
+        </span>
         <span className={`text-xs ${STATUS_COLOR[tc.status]}`}>{t(STATUS_KEY[tc.status])}</span>
       </summary>
       <div className="space-y-2 px-3 pb-3">
@@ -168,7 +171,9 @@ export function MessageView({
     return (
       <details open={toolView === 'verbose'} className="pl-10">
         <summary className="flex cursor-pointer list-none items-center gap-2 py-0.5 text-xs text-muted transition hover:text-fg [&::-webkit-details-marker]:hidden">
-          <span className={running ? 'animate-pulse' : ''}>⚙️</span>
+          <span className={running ? 'animate-pulse' : ''}>
+            <GearIcon className="h-3.5 w-3.5" />
+          </span>
           <span className="truncate">
             {firstLine || t('runningTools')} ·{' '}
             {t('toolCallsCount').replace('{n}', String(message.toolCalls.length))}

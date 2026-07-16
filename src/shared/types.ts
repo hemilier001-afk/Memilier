@@ -268,6 +268,10 @@ export interface PermissionRequest {
 /** preload 暴露到 window.api 的接口 */
 export interface Api {
   listModels(): Promise<ModelInfo[]>
+  /** 用户主目录（工作区显示 ~ 用） */
+  home: string
+  /** 会话列表在主进程侧变化（如自动命名）时触发 */
+  onConversationsUpdated(cb: () => void): () => void
   getSettings(): Promise<Settings>
   setSettings(patch: Partial<Settings>): Promise<Settings>
   listConversations(): Promise<Conversation[]>

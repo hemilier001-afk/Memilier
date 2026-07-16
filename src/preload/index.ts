@@ -3,6 +3,7 @@ import type { Api, PermissionRequest } from '@shared/types'
 
 const api: Api = {
   platform: process.platform,
+  home: process.env.HOME ?? process.env.USERPROFILE ?? '',
   copyText: (text) => ipcRenderer.invoke('clipboard:write', text),
   listModels: () => ipcRenderer.invoke('ollama:listModels'),
   getSettings: () => ipcRenderer.invoke('settings:get'),
@@ -97,6 +98,11 @@ const api: Api = {
     const listener = (_e: unknown, tasks: Parameters<typeof cb>[0]): void => cb(tasks)
     ipcRenderer.on('tasks:update', listener)
     return () => ipcRenderer.removeListener('tasks:update', listener)
+  },
+  onConversationsUpdated: (cb) => {
+    const listener = (): void => cb()
+    ipcRenderer.on('conversations:updated', listener)
+    return () => ipcRenderer.removeListener('conversations:updated', listener)
   },
   onUpdateAvailable: (cb) => {
     const listener = (_e: unknown, info: Parameters<typeof cb>[0]): void => cb(info)

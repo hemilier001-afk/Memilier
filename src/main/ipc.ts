@@ -479,6 +479,51 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
 
   // 同一会话的运行严格串行（不并发改同一份 messages）。
   // 注意：新任务必须「同步」写入 running，否则两个并发调用会 await 同一个 prev 后并行执行。
+  const DEFAULT_TITLES = new Set(['新对话', 'New chat'])
+  async function autoTitle(id: string): Promise<void> {
+    const conv = store.getConversation(id)
+    if (!conv || !DEFAULT_TITLES.has(conv.title)) return
+    const firstUser = conv.messages.find((m) => m.role === 'user' && m.content)
+    const firstAssistant = conv.messages.find((m) => m.role === 'assistant' && m.content)
+    if (!firstUser || !firstAssistant) return
+    const settings = store.getSettings()
+    const modelId = conv.model || settings.defaultModel
+    if (!bareModel(modelId)) return
+    try {
+      const provider = resolveProvider(modelId, settings)
+      const lang = settings.language === 'en' ? '英文' : '中文'
+      const { content } = await provider.chat({
+        model: bareModel(modelId),
+        messages: [
+          {
+            id: 's',
+            role: 'system',
+            content: `你是标题生成器。用${lang}给这段对话起一个不超过 12 个字的短标题，只输出标题本身，不要引号、句号或任何解释。`,
+            createdAt: 0
+          },
+          {
+            id: 'u',
+            role: 'user',
+            content: `用户：${firstUser.content.slice(0, 300)}\n助手：${firstAssistant.content.slice(0, 300)}`,
+            createdAt: 0
+          }
+        ]
+      })
+      const title = content
+        .split('\n')[0]
+        .replace(/["'「」『』<>《》。，!？?！]/g, '')
+        .trim()
+        .slice(0, 24)
+      // 起名期间用户可能已手动改名——再核对一次仍是默认值才写入
+      if (title && DEFAULT_TITLES.has(store.getConversation(id)?.title ?? '')) {
+        store.renameConversation(id, title)
+        sendToRenderer('conversations:updated', null)
+      }
+    } catch {
+      /* 起名失败无妨，保留默认标题 */
+    }
+  }
+
   const runConversation = (
     conversationId: string,
     userContent?: string,
@@ -517,6 +562,8 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     })()
     box.task = task
     running.set(conversationId, task)
+    // 运行结束后（若标题仍是默认值）让模型给会话起个短标题
+    void task.then(() => autoTitle(conversationId)).catch(() => {})
     return task
   }
 

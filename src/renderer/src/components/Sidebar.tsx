@@ -2,11 +2,23 @@ import { useMemo, useState } from 'react'
 import type { Conversation } from '@shared/types'
 import { useStore, type View } from '../store'
 import { useT } from '../i18n'
+import {
+  MessageIcon,
+  UsersIcon,
+  CodeIcon,
+  SparklesIcon,
+  ClockIcon,
+  ListChecksIcon,
+  GearIcon,
+  FolderIcon,
+  SearchIcon,
+  PinIcon
+} from './icons'
 
-const NAV: { key: View; label: string; icon: string }[] = [
-  { key: 'chat', label: 'Chats', icon: '💬' },
-  { key: 'cowork', label: 'Cowork', icon: '🤝' },
-  { key: 'code', label: 'Code', icon: '💻' }
+const NAV: { key: View; label: string; icon: JSX.Element }[] = [
+  { key: 'chat', label: 'Chats', icon: <MessageIcon /> },
+  { key: 'cowork', label: 'Cowork', icon: <UsersIcon /> },
+  { key: 'code', label: 'Code', icon: <CodeIcon /> }
 ]
 
 type TimeKey = 'today' | 'yesterday' | 'last7' | 'older'
@@ -113,7 +125,7 @@ function ConvRow({ c }: { c: Conversation }): JSX.Element {
             className="text-muted hover:text-accent"
             title={inActiveProject ? '移出当前项目' : '移入当前项目'}
           >
-            {inActiveProject ? '📤' : '📁'}
+            <FolderIcon className="h-3.5 w-3.5" />
           </button>
         )}
         <button
@@ -130,7 +142,7 @@ function ConvRow({ c }: { c: Conversation }): JSX.Element {
           className={c.pinned ? 'text-accent' : 'text-muted hover:text-accent'}
           title={c.pinned ? t('unpin') : t('pin')}
         >
-          📌
+          <PinIcon className="h-3.5 w-3.5" />
         </button>
         <button
           onClick={(e) => {
@@ -204,7 +216,7 @@ function Projects(): JSX.Element {
           }`}
         >
           <span className="flex min-w-0 items-center gap-1.5">
-            <span>📁</span>
+            <FolderIcon className="h-3.5 w-3.5" />
             <span className="truncate">{p.name}</span>
           </span>
           <button
@@ -236,8 +248,6 @@ export function Sidebar(): JSX.Element {
   const setRoutinesOpen = useStore((s) => s.setRoutinesOpen)
   const setTasksOpen = useStore((s) => s.setTasksOpen)
   const tasks = useStore((s) => s.tasks)
-  const settings = useStore((s) => s.settings)
-  const active = useStore((s) => s.active)
   const collapsed = useStore((s) => s.sidebarCollapsed)
   const setCollapsed = useStore((s) => s.setSidebarCollapsed)
   const [query, setQuery] = useState('')
@@ -305,7 +315,7 @@ export function Sidebar(): JSX.Element {
           title={t('settings')}
           className="flex h-10 w-10 items-center justify-center rounded-lg text-muted transition hover:bg-surface-2 hover:text-fg"
         >
-          ⚙
+          <GearIcon />
         </button>
       </aside>
     )
@@ -335,7 +345,7 @@ export function Sidebar(): JSX.Element {
 
       <div className="px-3 pt-2">
         <div className="flex items-center gap-2 rounded-lg border border-line bg-surface px-2 py-1.5">
-          <span className="text-sm text-muted">🔍</span>
+          <SearchIcon className="h-3.5 w-3.5 text-muted" />
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -362,20 +372,20 @@ export function Sidebar(): JSX.Element {
           onClick={() => setCustomizeOpen(true)}
           className="mb-0.5 flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm text-fg transition hover:bg-surface-2"
         >
-          <span>✨</span> Customize
+          <SparklesIcon /> Customize
         </button>
         <button
           onClick={() => setRoutinesOpen(true)}
           className="mb-0.5 flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm text-fg transition hover:bg-surface-2"
         >
-          <span>⏰</span> Routines
+          <ClockIcon /> Routines
         </button>
         <button
           onClick={() => setTasksOpen(true)}
           className="mb-0.5 flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-sm text-fg transition hover:bg-surface-2"
         >
           <span className="flex items-center gap-2.5">
-            <span>🔄</span> Tasks
+            <ListChecksIcon /> Tasks
           </span>
           {runningTasks > 0 && (
             <span className="rounded-full bg-accent px-1.5 text-xs text-white">{runningTasks}</span>
@@ -426,7 +436,7 @@ export function Sidebar(): JSX.Element {
           className="flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-sm text-fg transition hover:bg-surface-2"
         >
           <span className="flex items-center gap-2">
-            <span>⚙</span> {t('settings')}
+            <GearIcon /> {t('settings')}
           </span>
         </button>
       </div>

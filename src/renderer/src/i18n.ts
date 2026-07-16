@@ -129,6 +129,29 @@ const DICT: Dict = {
   viewVerboseTip: { zh: '展开全部工具调用细节', en: 'Expand all tool call details' },
   viewDensity: { zh: '工具过程详略', en: 'Detail level' },
   brandName: { zh: 'hemilier 智能体', en: 'hemilier' },
+  modeTitle: { zh: '运行模式', en: 'Mode' },
+  modeAuto: { zh: '自动', en: 'Auto' },
+  modeAutoDesc: {
+    zh: '放开工具，自主读写文件 / 执行命令',
+    en: 'Full tools — read/write files, run commands'
+  },
+  modePlan: { zh: '计划', en: 'Plan' },
+  modePlanDesc: {
+    zh: '只读调研，产出分步计划，不做修改',
+    en: 'Read-only research, step-by-step plan'
+  },
+  modeChat: { zh: '对话', en: 'Chat' },
+  modeChatDesc: { zh: '纯聊天，不调用任何工具', en: 'Plain chat, no tools' },
+  attach: { zh: '附加', en: 'Attach' },
+  attachImage: { zh: '上传图片', en: 'Upload image' },
+  attachFile: { zh: '上传本地文件', en: 'Upload file' },
+  attachWorkspace: { zh: '选择工作区文件夹', en: 'Choose workspace folder' },
+  attachPlugins: { zh: '管理插件 / MCP', en: 'Manage plugins / MCP' },
+  wsTip: { zh: '工作区：{d}（点击切换文件夹）', en: 'Workspace: {d} (click to change)' },
+  micSetup: { zh: '点此到设置配置语音转写（ASR）', en: 'Set up speech-to-text (ASR) in Settings' },
+  micStop: { zh: '停止并转写', en: 'Stop & transcribe' },
+  micBusy: { zh: '转写中…', en: 'Transcribing…' },
+  micStart: { zh: '语音输入', en: 'Voice input' },
   appTagline: { zh: 'hemilier 桌面智能体', en: 'hemilier desktop agent' },
 
   // 头部

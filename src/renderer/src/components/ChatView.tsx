@@ -3,9 +3,28 @@ import type { Message as MsgType } from '@shared/types'
 import { useStore, type ToolView } from '../store'
 import { useT } from '../i18n'
 import { MessageView, StreamingBubble } from './Message'
+import {
+  FolderIcon,
+  ImageIcon,
+  FileIcon,
+  BlocksIcon,
+  ZapIcon,
+  ListChecksIcon,
+  MessageIcon,
+  MicIcon,
+  SearchIcon,
+  PencilIcon,
+  SparklesIcon,
+  GearIcon
+} from './icons'
 
 const STARTERS = ['starter1', 'starter2', 'starter3', 'starter4'] as const
-const STARTER_ICONS = ['📂', '🔍', '✍️', '🧠']
+const STARTER_ICONS = [
+  <FolderIcon key="s1" />,
+  <SearchIcon key="s2" />,
+  <PencilIcon key="s3" />,
+  <SparklesIcon key="s4" />
+]
 
 function StarterPrompts(): JSX.Element {
   const send = useStore((s) => s.send)
@@ -20,7 +39,7 @@ function StarterPrompts(): JSX.Element {
   const unconfigured = settings && !settings.defaultModel && !(settings.providers ?? []).length
   if (unconfigured) {
     return (
-      <div className="mt-12 text-center">
+      <div className="text-center">
         <p className="font-display mb-2 text-3xl text-fg">👋 欢迎使用 hemilier</p>
         <p className="mb-5 text-sm text-muted">开始对话前，先接入一个模型（三步，约 1 分钟）</p>
         <ol className="mx-auto mb-5 max-w-md space-y-2 text-left text-sm text-muted">
@@ -41,7 +60,7 @@ function StarterPrompts(): JSX.Element {
   }
 
   return (
-    <div className="mt-12 text-center">
+    <div className="text-center">
       {/* Claude 式衬线问候语 */}
       <p className="font-display mb-6 text-3xl text-fg">{t('starterHint')}</p>
       {view !== 'chat' && (
@@ -176,7 +195,7 @@ function renderGrouped(
       items.push(
         <details key={`grp-${group[0].id}`} className="pl-10">
           <summary className="flex cursor-pointer list-none items-center gap-2 py-0.5 text-xs text-muted transition hover:text-fg [&::-webkit-details-marker]:hidden">
-            <span>⚙️</span>
+            <GearIcon className="h-3.5 w-3.5" />
             <span className="truncate">
               {(t as (k: string) => string)('workedSteps')
                 .replace('{n}', String(steps.length))
@@ -335,43 +354,58 @@ function PanelToggle(): JSX.Element {
 
 function WorkspacePicker({ dir }: { dir: string }): JSX.Element {
   const pickActiveWorkspace = useStore((s) => s.pickActiveWorkspace)
-  const name =
-    dir
-      .replace(/[/\\]+$/, '')
-      .split(/[/\\]/)
-      .pop() || dir
+  const t = useT()
+  const clean = dir.replace(/[/\\]+$/, '')
+  // 主目录显示为 ~（避免家目录名与品牌名混淆，如 memilier vs hemilier）
+  const name = clean === window.api.home ? '~' : clean.split(/[/\\]/).pop() || dir
 
   return (
     <button
       onClick={() => void pickActiveWorkspace()}
-      title={`工作区：${dir}（点击切换文件夹）`}
-      className="flex max-w-[200px] items-center gap-1 rounded-md border border-line px-2 py-1 text-sm text-muted transition hover:border-accent hover:text-accent"
+      title={t('wsTip').replace('{d}', dir)}
+      className="flex max-w-[200px] items-center gap-1.5 rounded-md border border-line px-2 py-1 text-sm text-muted transition hover:border-accent hover:text-accent"
     >
-      <span>📁</span>
+      <FolderIcon className="h-3.5 w-3.5" />
       <span className="truncate">{name}</span>
     </button>
   )
 }
 
-const MODES: { key: 'auto' | 'plan' | 'chat'; label: string; icon: string; desc: string }[] = [
-  { key: 'auto', label: '自动', icon: '⚡', desc: '放开工具，自主读写文件 / 执行命令' },
-  { key: 'plan', label: '计划', icon: '📋', desc: '只读调研，产出分步计划，不做修改' },
-  { key: 'chat', label: '对话', icon: '💬', desc: '纯聊天，不调用任何工具' }
+const MODES: { key: 'auto' | 'plan' | 'chat'; label: string; icon: JSX.Element; desc: string }[] = [
+  {
+    key: 'auto',
+    label: 'modeAuto',
+    icon: <ZapIcon className="h-3.5 w-3.5" />,
+    desc: 'modeAutoDesc'
+  },
+  {
+    key: 'plan',
+    label: 'modePlan',
+    icon: <ListChecksIcon className="h-3.5 w-3.5" />,
+    desc: 'modePlanDesc'
+  },
+  {
+    key: 'chat',
+    label: 'modeChat',
+    icon: <MessageIcon className="h-3.5 w-3.5" />,
+    desc: 'modeChatDesc'
+  }
 ]
 
 function ModeMenu(): JSX.Element {
   const active = useStore((s) => s.active)
   const setActiveMode = useStore((s) => s.setActiveMode)
   const [open, setOpen] = useState(false)
+  const t = useT() as unknown as (k: string) => string
   const cur = MODES.find((m) => m.key === (active?.mode ?? 'auto')) ?? MODES[0]
   return (
     <div className="relative">
       <button
         onClick={() => setOpen((v) => !v)}
         className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-muted transition hover:bg-surface-2 hover:text-fg"
-        title="运行模式"
+        title={t('modeTitle')}
       >
-        {cur.icon} {cur.label} <span className="text-[10px]">▾</span>
+        {cur.icon} {t(cur.label)} <span className="text-[10px]">▾</span>
       </button>
       {open && (
         <>
@@ -388,10 +422,10 @@ function ModeMenu(): JSX.Element {
                   cur.key === m.key ? 'text-accent' : 'text-fg'
                 }`}
               >
-                <div className="font-medium">
-                  {m.icon} {m.label}
+                <div className="flex items-center gap-1.5 font-medium">
+                  {m.icon} {t(m.label)}
                 </div>
-                <div className="text-muted">{m.desc}</div>
+                <div className="text-muted">{t(m.desc)}</div>
               </button>
             ))}
           </div>
@@ -411,6 +445,7 @@ function AttachMenu({
   const pickActiveWorkspace = useStore((s) => s.pickActiveWorkspace)
   const setSettingsOpen = useStore((s) => s.setSettingsOpen)
   const [open, setOpen] = useState(false)
+  const t = useT()
 
   const uploadFile = async (): Promise<void> => {
     setOpen(false)
@@ -430,7 +465,7 @@ function AttachMenu({
       <button
         onClick={() => setOpen((v) => !v)}
         className="flex h-7 w-7 items-center justify-center rounded-lg text-base text-muted transition hover:bg-surface-2 hover:text-fg"
-        title="附加"
+        title={t('attach')}
       >
         +
       </button>
@@ -439,10 +474,16 @@ function AttachMenu({
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
           <div className="absolute bottom-full left-0 z-20 mb-1 w-44 rounded-lg border border-line bg-surface py-1 shadow-lg">
             <button onClick={() => void uploadImage()} className={item}>
-              🖼 上传图片
+              <span className="mr-1.5">
+                <ImageIcon className="h-3.5 w-3.5" />
+              </span>
+              {t('attachImage')}
             </button>
             <button onClick={() => void uploadFile()} className={item}>
-              📄 上传本地文件
+              <span className="mr-1.5">
+                <FileIcon className="h-3.5 w-3.5" />
+              </span>
+              {t('attachFile')}
             </button>
             <button
               onClick={() => {
@@ -451,7 +492,10 @@ function AttachMenu({
               }}
               className={item}
             >
-              📁 选择工作区文件夹
+              <span className="mr-1.5">
+                <FolderIcon className="h-3.5 w-3.5" />
+              </span>
+              {t('attachWorkspace')}
             </button>
             <button
               onClick={() => {
@@ -460,7 +504,10 @@ function AttachMenu({
               }}
               className={item}
             >
-              🧩 管理插件 / MCP
+              <span className="mr-1.5">
+                <BlocksIcon className="h-3.5 w-3.5" />
+              </span>
+              {t('attachPlugins')}
             </button>
           </div>
         </>
@@ -518,21 +565,24 @@ function MicButton({ onAppend }: { onAppend: (text: string) => void }): JSX.Elem
     else if (status === 'idle' || status === 'error') void start()
   }
 
-  const icon =
-    status === 'recording'
-      ? '🔴'
-      : status === 'transcribing'
-        ? '⏳'
-        : status === 'error'
-          ? '⚠️'
-          : '🎤'
+  const icon: React.ReactNode =
+    status === 'recording' ? (
+      <span className="inline-block h-2.5 w-2.5 animate-pulse rounded-full bg-red-500" />
+    ) : status === 'transcribing' ? (
+      '…'
+    ) : status === 'error' ? (
+      '!'
+    ) : (
+      <MicIcon className="h-4 w-4" />
+    )
+  const t = useT()
   const title = !asrConfigured
-    ? '点此到设置配置语音转写（ASR）'
+    ? t('micSetup')
     : status === 'recording'
-      ? '停止并转写'
+      ? t('micStop')
       : status === 'transcribing'
-        ? '转写中…'
-        : '语音输入'
+        ? t('micBusy')
+        : t('micStart')
 
   return (
     <button
@@ -1016,7 +1066,12 @@ export function ChatView(): JSX.Element {
         onWheel={onWheel}
         className="flex-1 overflow-y-auto px-4 py-6"
       >
-        <div ref={contentRef} className="mx-auto flex max-w-3xl flex-col gap-6">
+        <div
+          ref={contentRef}
+          className={`mx-auto flex w-full max-w-3xl flex-col gap-6 ${
+            active.messages.length === 0 && !showStreaming ? 'h-full justify-center' : ''
+          }`}
+        >
           {active.messages.length === 0 && !showStreaming ? (
             <StarterPrompts />
           ) : (

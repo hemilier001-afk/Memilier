@@ -3,6 +3,7 @@ import type { FsEntry, GitStatus, MemoryEntry, MemoryType } from '@shared/types'
 import { diffStat, lineDiff } from '@shared/diff'
 import { useStore } from '../store'
 import { Markdown } from './Message'
+import { FolderIcon, FolderOpenIcon, FileIcon } from './icons'
 
 type RightTab = 'files' | 'preview' | 'diff' | 'plan' | 'terminal' | 'git' | 'memory'
 
@@ -187,7 +188,11 @@ function Entry({
           onClick={() => setOpen((o) => !o)}
           className="flex w-full items-center gap-1 py-1 text-left text-sm hover:bg-surface-2"
         >
-          <span className="text-xs">{open ? '📂' : '📁'}</span>
+          {open ? (
+            <FolderOpenIcon className="h-3.5 w-3.5 text-muted" />
+          ) : (
+            <FolderIcon className="h-3.5 w-3.5 text-muted" />
+          )}
           <span className="truncate">{entry.name}</span>
         </button>
         {open && <DirView workspace={workspace} dir={rel} depth={depth + 1} />}
@@ -203,7 +208,7 @@ function Entry({
         isSelected ? 'bg-accent-soft text-accent' : ''
       }`}
     >
-      <span className="text-xs">📄</span>
+      <FileIcon className="h-3.5 w-3.5 text-muted" />
       <span className="truncate">{entry.name}</span>
     </button>
   )
@@ -722,7 +727,7 @@ export function RightPanel(): JSX.Element | null {
           title={`工作区：${active.workspaceDir}（点击切换文件夹）`}
           className="flex items-center gap-1.5 border-b border-line px-3 py-1.5 text-xs text-muted transition hover:text-accent"
         >
-          <span>📁</span>
+          <FolderIcon className="h-3.5 w-3.5" />
           <span className="truncate">{folder}</span>
           <span className="ml-auto shrink-0 text-[11px]">切换</span>
         </button>

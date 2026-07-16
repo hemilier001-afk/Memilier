@@ -166,6 +166,14 @@ export const useStore = create<UIState>((set, get) => ({
         const queue = [...get().permissionQueue, req]
         set({ permissionQueue: queue, permission: queue[0] })
       })
+      window.api.onConversationsUpdated(() => {
+        void window.api.listConversations().then((conversations) => {
+          set({ conversations })
+          const a = get().active
+          const u = conversations.find((c) => c.id === a?.id)
+          if (a && u && u.title !== a.title) set({ active: { ...a, title: u.title } })
+        })
+      })
       window.api.onTasksUpdate((tasks) => {
         // 后台任务会新建对话，顺带刷新对话列表
         set({ tasks })
