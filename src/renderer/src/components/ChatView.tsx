@@ -40,20 +40,21 @@ function StarterPrompts(): JSX.Element {
   if (unconfigured) {
     return (
       <div className="text-center">
-        <p className="font-display mb-2 text-3xl text-fg">👋 欢迎使用 hemilier</p>
-        <p className="mb-5 text-sm text-muted">开始对话前，先接入一个模型（三步，约 1 分钟）</p>
+        <p className="font-display mb-2 text-3xl text-fg">{t('welcomeTitle')}</p>
+        <p className="mb-5 text-sm text-muted">{t('welcomeSub')}</p>
         <ol className="mx-auto mb-5 max-w-md space-y-2 text-left text-sm text-muted">
-          <li>1. 打开设置 → 模型，添加提供方（推荐 DeepSeek）</li>
-          <li>2. 粘贴你自己的 API Key（本机加密保存）</li>
+          <li>{t('welcomeStep1')}</li>
+          <li>{t('welcomeStep2')}</li>
           <li>
-            3. 回到这里，顶部选择 <code className="text-accent">deepseek-chat</code> 即可开聊
+            {t('welcomeStep3A')} <code className="text-accent">deepseek-chat</code>{' '}
+            {t('welcomeStep3B')}
           </li>
         </ol>
         <button
           onClick={() => setSettingsOpen(true)}
           className="rounded-lg bg-accent px-4 py-2 text-sm text-white transition hover:opacity-90"
         >
-          ⚙ 打开设置
+          {t('openSettings')}
         </button>
       </div>
     )
@@ -65,12 +66,13 @@ function StarterPrompts(): JSX.Element {
       <p className="font-display mb-6 text-3xl text-fg">{t('starterHint')}</p>
       {view !== 'chat' && (
         <div className="mx-auto mb-4 max-w-xl rounded-lg border border-line bg-surface-2 px-4 py-2 text-xs text-muted">
-          当前工作区：<span className="font-mono">{active?.workspaceDir || '(未设置)'}</span>
+          {t('curWorkspace')}
+          <span className="font-mono">{active?.workspaceDir || t('notSet')}</span>
           <button onClick={() => void pickWs()} className="ml-2 text-accent hover:underline">
-            更换
+            {t('wsChangeBtn')}
           </button>
           <span className="ml-2">
-            · 提示：在工作区放一个 <code>AGENTS.md</code> 可为该项目定制智能体行为
+            {t('agentsMdTip')} <code>AGENTS.md</code> {t('agentsMdTipB')}
           </span>
         </div>
       )}
@@ -106,7 +108,7 @@ function ModelSelector(): JSX.Element {
 
   // 按提供方分组展示
   const groups = models.reduce<Record<string, typeof models>>((acc, m) => {
-    const key = m.provider ?? '模型'
+    const key = m.provider ?? t('modelGroup')
     ;(acc[key] ??= []).push(m)
     return acc
   }, {})
@@ -118,7 +120,7 @@ function ModelSelector(): JSX.Element {
         onChange={(e) => setActiveModel(e.target.value)}
         className="max-w-[180px] cursor-pointer rounded-md bg-transparent px-1 py-0.5 text-xs text-muted outline-none transition hover:text-fg"
       >
-        {models.length === 0 && <option value="">无可用模型</option>}
+        {models.length === 0 && <option value="">{t('noModels')}</option>}
         {Object.entries(groups).map(([provider, list]) => (
           <optgroup key={provider} label={provider}>
             {list.map((m) => (
@@ -337,12 +339,13 @@ function HeaderMenu({
 }
 
 function PanelToggle(): JSX.Element {
+  const t = useT()
   const open = useStore((s) => s.rightPanelOpen)
   const toggle = useStore((s) => s.toggleRightPanel)
   return (
     <button
       onClick={toggle}
-      title={open ? '隐藏右侧面板' : '显示右侧面板（Files / Preview）'}
+      title={open ? t('panelHide') : t('panelShow')}
       className={`rounded-md border px-2 py-1 text-sm transition ${
         open ? 'border-accent text-accent' : 'border-line text-muted hover:text-fg'
       }`}
@@ -623,49 +626,49 @@ function Composer(): JSX.Element {
     {
       id: 'new',
       label: '/new',
-      desc: '新建对话',
+      desc: t('slashNew'),
       run: () => void useStore.getState().newConversation()
     },
     {
       id: 'compact',
       label: '/compact',
-      desc: '压缩较早历史为摘要，腾出上下文',
+      desc: t('slashCompact'),
       run: () => void useStore.getState().compact()
     },
     {
       id: 'plan',
       label: '/plan',
-      desc: '切到计划模式（只读调研）',
+      desc: t('slashPlan'),
       run: () => useStore.getState().setActiveMode('plan')
     },
     {
       id: 'auto',
       label: '/auto',
-      desc: '切到自动模式（全部工具）',
+      desc: t('slashAuto'),
       run: () => useStore.getState().setActiveMode('auto')
     },
     {
       id: 'chat',
       label: '/chat',
-      desc: '切到纯对话模式（不用工具）',
+      desc: t('slashChat'),
       run: () => useStore.getState().setActiveMode('chat')
     },
     {
       id: 'export',
       label: '/export',
-      desc: '导出对话为 Markdown',
+      desc: t('slashExport'),
       run: () => useStore.getState().exportActive()
     },
     {
       id: 'reflect',
       label: '/reflect',
-      desc: '回顾本次对话，沉淀记忆/技能',
+      desc: t('slashReflect'),
       run: () => useStore.getState().reflect()
     },
     {
       id: 'settings',
       label: '/settings',
-      desc: '打开设置',
+      desc: t('slashSettings'),
       run: () => useStore.getState().setSettingsOpen(true)
     }
   ]

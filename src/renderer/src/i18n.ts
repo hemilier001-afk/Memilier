@@ -205,6 +205,101 @@ const DICT: Dict = {
   },
   generating: { zh: '正在生成', en: 'Generating' },
 
+  // 后台任务弹窗
+  tasksTitle: { zh: '后台任务', en: 'Background tasks' },
+  tasksEmpty: {
+    zh: '还没有后台任务。例程触发或手动运行后会出现在这里。',
+    en: 'No background tasks yet. They appear here when routines fire or you run one manually.'
+  },
+  taskRunning: { zh: '运行中', en: 'Running' },
+  taskDone: { zh: '已完成', en: 'Done' },
+  taskError: { zh: '失败', en: 'Failed' },
+  taskStop: { zh: '停止', en: 'Stop' },
+
+  // 例程弹窗
+  routinesTitle: { zh: '例程', en: 'Routines' },
+  routinesHint: {
+    zh: '按固定间隔自动触发的后台任务：到点会自动新建一个对话、用所给指令运行智能体，完成后发系统通知。后台运行会自动放行工具调用，请仅用于你信任的指令。',
+    en: 'Scheduled background tasks: at each interval a new conversation runs your prompt and sends a system notification when done. Background runs auto-approve tool calls — use only prompts you trust.'
+  },
+  routineName: { zh: '名称', en: 'Name' },
+  routinePrompt: { zh: '指令（prompt）', en: 'Prompt' },
+  routinePromptPh: {
+    zh: '例如：总结今天 logs 目录下的错误并写入 report.md',
+    en: 'e.g. Summarize today’s errors in the logs folder into report.md'
+  },
+  routineInterval: { zh: '每隔（分钟）', en: 'Every (minutes)' },
+  routineModel: { zh: '模型（可选）', en: 'Model (optional)' },
+  routineDefaultModel: { zh: '默认模型', en: 'Default model' },
+  routineEnabled: { zh: '启用（定时触发）', en: 'Enabled (runs on schedule)' },
+  routineNew: { zh: '+ 新建例程', en: '+ New routine' },
+  routinesEmpty: { zh: '当前空间还没有例程。', en: 'No routines in this space yet.' },
+  routineDisabled: { zh: '（已停用）', en: '(disabled)' },
+  routineEveryMin: { zh: '每 {n} 分钟', en: 'Every {n} min' },
+  routineRunNowTip: { zh: '立即运行一次', en: 'Run once now' },
+  routineRunNow: { zh: '▶运行', en: '▶Run' },
+
+  // 自定义指令弹窗
+  customizeTitle: { zh: '自定义', en: 'Customize' },
+  customizeHintA: {
+    zh: '这里的指令会注入到',
+    en: 'These instructions are injected into every conversation in the'
+  },
+  customizeHintB: {
+    zh: '空间所有对话的系统提示中，用于设定语气、角色、约束等。仅对当前空间生效。',
+    en: 'space (system prompt) — set tone, role, constraints. Applies to this space only.'
+  },
+  customizePh: {
+    zh: '例如：你是一名资深前端工程师，回答尽量简洁，代码优先用 TypeScript。',
+    en: 'e.g. You are a senior front-end engineer. Keep answers concise; prefer TypeScript.'
+  },
+
+  // 欢迎卡 / 空间提示 / 其它
+  welcomeTitle: { zh: '👋 欢迎使用 hemilier', en: '👋 Welcome to hemilier' },
+  welcomeSub: {
+    zh: '开始对话前，先接入一个模型（三步，约 1 分钟）',
+    en: 'Before chatting, connect a model (3 steps, ~1 minute)'
+  },
+  welcomeStep1: {
+    zh: '1. 打开设置 → 模型，添加提供方（推荐 DeepSeek）',
+    en: '1. Open Settings → Models, add a provider (DeepSeek recommended)'
+  },
+  welcomeStep2: {
+    zh: '2. 粘贴你自己的 API Key（本机加密保存）',
+    en: '2. Paste your own API key (encrypted locally)'
+  },
+  welcomeStep3A: { zh: '3. 回到这里，顶部选择', en: '3. Come back and pick' },
+  welcomeStep3B: { zh: '即可开聊', en: 'to start chatting' },
+  openSettings: { zh: '⚙ 打开设置', en: '⚙ Open Settings' },
+  curWorkspace: { zh: '当前工作区：', en: 'Workspace: ' },
+  notSet: { zh: '(未设置)', en: '(not set)' },
+  wsChangeBtn: { zh: '更换', en: 'Change' },
+  agentsMdTip: { zh: '· 提示：在工作区放一个', en: '· Tip: put an' },
+  agentsMdTipB: {
+    zh: '可为该项目定制智能体行为',
+    en: 'in the workspace to customize agent behavior for this project'
+  },
+  panelShow: {
+    zh: '显示右侧面板（Files / Preview）',
+    en: 'Show workspace panel (Files / Preview)'
+  },
+  panelHide: { zh: '隐藏右侧面板', en: 'Hide workspace panel' },
+  modelGroup: { zh: '模型', en: 'Models' },
+  slashNew: { zh: '新建对话', en: 'New conversation' },
+  slashCompact: {
+    zh: '压缩较早历史为摘要，腾出上下文',
+    en: 'Compact older history into a summary'
+  },
+  slashPlan: { zh: '切到计划模式（只读调研）', en: 'Switch to Plan mode (read-only)' },
+  slashAuto: { zh: '切到自动模式（全部工具）', en: 'Switch to Auto mode (all tools)' },
+  slashChat: { zh: '切到纯对话模式（不用工具）', en: 'Switch to Chat mode (no tools)' },
+  slashExport: { zh: '导出对话为 Markdown', en: 'Export conversation as Markdown' },
+  slashReflect: {
+    zh: '回顾本次对话，沉淀记忆/技能',
+    en: 'Reflect: save memories / skills from this chat'
+  },
+  slashSettings: { zh: '打开设置', en: 'Open Settings' },
+
   // 起步提示
   starter1: { zh: '列出当前工作区的文件结构', en: 'List the files in my workspace' },
   starter2: { zh: '在工作区里搜索 TODO 注释', en: 'Search the workspace for TODO comments' },

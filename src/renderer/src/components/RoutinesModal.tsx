@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { Routine } from '@shared/types'
 import { useStore } from '../store'
+import { useT } from '../i18n'
 
 const SPACE_LABEL: Record<string, string> = { chat: 'Chats', cowork: 'Cowork', code: 'Code' }
 
@@ -17,6 +18,7 @@ function blankRoutine(kind: Routine['kind']): Routine {
 }
 
 export function RoutinesModal(): JSX.Element | null {
+  const t = useT()
   const open = useStore((s) => s.routinesOpen)
   const setOpen = useStore((s) => s.setRoutinesOpen)
   const view = useStore((s) => s.view)
@@ -41,19 +43,19 @@ export function RoutinesModal(): JSX.Element | null {
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40">
       <div className="max-h-[85vh] w-[560px] overflow-y-auto rounded-xl border border-line bg-surface p-6 text-fg shadow-xl">
         <div className="mb-1 flex items-center justify-between">
-          <h2 className="text-lg font-semibold">例程 · {SPACE_LABEL[view]}</h2>
+          <h2 className="text-lg font-semibold">
+            {t('routinesTitle')} · {SPACE_LABEL[view]}
+          </h2>
           <button onClick={() => setOpen(false)} className="text-muted hover:text-fg">
             ✕
           </button>
         </div>
-        <p className="mb-4 text-xs text-muted">
-          按固定间隔自动触发的后台任务：到点会自动新建一个对话、用所给指令运行智能体，完成后发系统通知。后台运行会自动放行工具调用，请仅用于你信任的指令。
-        </p>
+        <p className="mb-4 text-xs text-muted">{t('routinesHint')}</p>
 
         {editing ? (
           <div className="space-y-3 text-sm">
             <div>
-              <label className="mb-1 block font-medium">名称</label>
+              <label className="mb-1 block font-medium">{t('routineName')}</label>
               <input
                 value={editing.name}
                 onChange={(e) => setEditing({ ...editing, name: e.target.value })}
@@ -61,18 +63,18 @@ export function RoutinesModal(): JSX.Element | null {
               />
             </div>
             <div>
-              <label className="mb-1 block font-medium">指令（prompt）</label>
+              <label className="mb-1 block font-medium">{t('routinePrompt')}</label>
               <textarea
                 value={editing.prompt}
                 onChange={(e) => setEditing({ ...editing, prompt: e.target.value })}
                 rows={4}
-                placeholder="例如：总结今天 logs 目录下的错误并写入 report.md"
+                placeholder={t('routinePromptPh')}
                 className="w-full rounded-md border border-line bg-transparent p-2"
               />
             </div>
             <div className="flex gap-3">
               <div className="flex-1">
-                <label className="mb-1 block font-medium">每隔（分钟）</label>
+                <label className="mb-1 block font-medium">{t('routineInterval')}</label>
                 <input
                   type="number"
                   min={1}
@@ -84,13 +86,13 @@ export function RoutinesModal(): JSX.Element | null {
                 />
               </div>
               <div className="flex-1">
-                <label className="mb-1 block font-medium">模型（可选）</label>
+                <label className="mb-1 block font-medium">{t('routineModel')}</label>
                 <select
                   value={editing.model ?? ''}
                   onChange={(e) => setEditing({ ...editing, model: e.target.value || undefined })}
                   className="w-full rounded-md border border-line bg-transparent px-2 py-1.5"
                 >
-                  <option value="">默认模型</option>
+                  <option value="">{t('routineDefaultModel')}</option>
                   {models.map((m) => (
                     <option key={m.name} value={m.name}>
                       {m.label ?? m.name}
@@ -105,20 +107,20 @@ export function RoutinesModal(): JSX.Element | null {
                 checked={editing.enabled}
                 onChange={(e) => setEditing({ ...editing, enabled: e.target.checked })}
               />
-              启用（定时触发）
+              {t('routineEnabled')}
             </label>
             <div className="flex justify-end gap-2 pt-1">
               <button
                 onClick={() => setEditing(null)}
                 className="rounded-lg px-4 py-2 text-sm text-muted hover:bg-surface-2 hover:text-fg"
               >
-                取消
+                {t('cancel')}
               </button>
               <button
                 onClick={save}
                 className="rounded-lg bg-accent px-4 py-2 text-sm text-white hover:bg-accent-hover"
               >
-                保存
+                {t('save')}
               </button>
             </div>
           </div>
@@ -128,10 +130,10 @@ export function RoutinesModal(): JSX.Element | null {
               onClick={() => setEditing(blankRoutine(view))}
               className="mb-3 rounded-lg bg-accent px-3 py-2 text-sm text-white hover:bg-accent-hover"
             >
-              + 新建例程
+              {t('routineNew')}
             </button>
             {list.length === 0 ? (
-              <p className="text-sm text-muted">当前空间还没有例程。</p>
+              <p className="text-sm text-muted">{t('routinesEmpty')}</p>
             ) : (
               <ul className="space-y-2">
                 {list.map((r) => (
@@ -142,28 +144,31 @@ export function RoutinesModal(): JSX.Element | null {
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="font-medium">{r.name}</span>
-                        {!r.enabled && <span className="text-xs text-muted">（已停用）</span>}
+                        {!r.enabled && (
+                          <span className="text-xs text-muted">{t('routineDisabled')}</span>
+                        )}
                       </div>
                       <div className="truncate text-xs text-muted">
-                        每 {r.intervalMinutes} 分钟 · {r.prompt}
+                        {t('routineEveryMin').replace('{n}', String(r.intervalMinutes))} ·{' '}
+                        {r.prompt}
                       </div>
                     </div>
                     <div className="ml-2 flex shrink-0 items-center gap-2 text-xs">
                       <button
                         onClick={() => void runRoutineNow(r.id)}
                         className="text-muted hover:text-accent"
-                        title="立即运行一次"
+                        title={t('routineRunNowTip')}
                       >
-                        ▶运行
+                        {t('routineRunNow')}
                       </button>
                       <button onClick={() => setEditing(r)} className="text-muted hover:text-fg">
-                        编辑
+                        {t('edit')}
                       </button>
                       <button
                         onClick={() => void deleteRoutine(r.id)}
                         className="text-muted hover:text-red-500"
                       >
-                        删除
+                        {t('deleteChat')}
                       </button>
                     </div>
                   </li>

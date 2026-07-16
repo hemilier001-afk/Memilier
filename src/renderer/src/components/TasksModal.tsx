@@ -1,9 +1,10 @@
 import { useStore } from '../store'
+import { useT } from '../i18n'
 
 const STATUS: Record<string, { label: string; cls: string }> = {
-  running: { label: '运行中', cls: 'text-muted' },
-  done: { label: '已完成', cls: 'text-green-500' },
-  error: { label: '失败', cls: 'text-red-500' }
+  running: { label: 'taskRunning', cls: 'text-muted' },
+  done: { label: 'taskDone', cls: 'text-green-500' },
+  error: { label: 'taskError', cls: 'text-red-500' }
 }
 
 function when(ts: number): string {
@@ -11,6 +12,7 @@ function when(ts: number): string {
 }
 
 export function TasksModal(): JSX.Element | null {
+  const tr = useT() as unknown as (k: string) => string
   const open = useStore((s) => s.tasksOpen)
   const setOpen = useStore((s) => s.setTasksOpen)
   const tasks = useStore((s) => s.tasks)
@@ -22,14 +24,14 @@ export function TasksModal(): JSX.Element | null {
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40">
       <div className="max-h-[85vh] w-[560px] overflow-y-auto rounded-xl border border-line bg-surface p-6 text-fg shadow-xl">
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-lg font-semibold">后台任务</h2>
+          <h2 className="text-lg font-semibold">{tr('tasksTitle')}</h2>
           <button onClick={() => setOpen(false)} className="text-muted hover:text-fg">
             ✕
           </button>
         </div>
 
         {tasks.length === 0 ? (
-          <p className="text-sm text-muted">还没有后台任务。例程触发或手动运行后会出现在这里。</p>
+          <p className="text-sm text-muted">{tr('tasksEmpty')}</p>
         ) : (
           <ul className="space-y-2">
             {tasks.map((t) => {
@@ -47,7 +49,7 @@ export function TasksModal(): JSX.Element | null {
                       {t.error ? ` · ${t.error}` : ''}
                     </div>
                   </div>
-                  <span className={`ml-2 shrink-0 text-xs ${s.cls}`}>{s.label}</span>
+                  <span className={`ml-2 shrink-0 text-xs ${s.cls}`}>{tr(s.label)}</span>
                   {t.status === 'running' && (
                     <button
                       onClick={(e) => {
@@ -56,7 +58,7 @@ export function TasksModal(): JSX.Element | null {
                       }}
                       className="ml-2 shrink-0 rounded-md border border-line px-2 py-0.5 text-xs text-muted transition hover:text-red-500"
                     >
-                      停止
+                      {tr('taskStop')}
                     </button>
                   )}
                 </li>
