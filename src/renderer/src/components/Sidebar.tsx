@@ -80,7 +80,7 @@ function ConvRow({ c }: { c: Conversation }): JSX.Element {
       onClick={() => void selectConversation(c.id)}
       onDoubleClick={startEdit}
       className={`group flex cursor-pointer items-center justify-between rounded-lg px-2 py-1.5 text-sm transition ${
-        active?.id === c.id ? 'bg-accent-soft text-accent' : 'text-fg hover:bg-surface'
+        active?.id === c.id ? 'bg-accent-soft text-accent' : 'text-fg hover:bg-surface-2'
       }`}
     >
       <span className="flex min-w-0 items-center gap-1.5">
@@ -199,7 +199,7 @@ function Projects(): JSX.Element {
           key={p.id}
           onClick={() => setActiveProject(activeProjectId === p.id ? null : p.id)}
           className={`group flex cursor-pointer items-center justify-between rounded-lg px-2 py-1.5 text-sm transition ${
-            activeProjectId === p.id ? 'bg-accent-soft text-accent' : 'text-fg hover:bg-surface'
+            activeProjectId === p.id ? 'bg-accent-soft text-accent' : 'text-fg hover:bg-surface-2'
           }`}
         >
           <span className="flex min-w-0 items-center gap-1.5">
@@ -269,18 +269,18 @@ export function Sidebar(): JSX.Element {
 
   if (collapsed) {
     return (
-      <aside className="region-drag flex w-14 flex-col items-center gap-1 border-r border-line bg-surface-2 pb-2 pt-10">
+      <aside className="region-drag flex w-14 flex-col items-center gap-1 border-r border-line bg-paper pb-2 pt-10">
         <button
           onClick={() => setCollapsed(false)}
           title="展开侧栏"
-          className="flex h-10 w-10 items-center justify-center rounded-lg text-muted transition hover:bg-surface hover:text-fg"
+          className="flex h-10 w-10 items-center justify-center rounded-lg text-muted transition hover:bg-surface-2 hover:text-fg"
         >
           ☰
         </button>
         <button
           onClick={() => void newConversation()}
           title={t('newChat')}
-          className="flex h-10 w-10 items-center justify-center rounded-lg text-muted transition hover:bg-surface hover:text-fg"
+          className="flex h-10 w-10 items-center justify-center rounded-lg text-muted transition hover:bg-surface-2 hover:text-fg"
         >
           ✎
         </button>
@@ -292,7 +292,7 @@ export function Sidebar(): JSX.Element {
             className={`flex h-10 w-10 items-center justify-center rounded-lg transition ${
               view === n.key
                 ? 'bg-accent-soft text-accent'
-                : 'text-muted hover:bg-surface hover:text-fg'
+                : 'text-muted hover:bg-surface-2 hover:text-fg'
             }`}
           >
             {n.icon}
@@ -302,7 +302,7 @@ export function Sidebar(): JSX.Element {
         <button
           onClick={() => setSettingsOpen(true)}
           title={t('settings')}
-          className="flex h-10 w-10 items-center justify-center rounded-lg text-muted transition hover:bg-surface hover:text-fg"
+          className="flex h-10 w-10 items-center justify-center rounded-lg text-muted transition hover:bg-surface-2 hover:text-fg"
         >
           ⚙
         </button>
@@ -311,13 +311,13 @@ export function Sidebar(): JSX.Element {
   }
 
   return (
-    <aside className="flex w-64 flex-col border-r border-line bg-surface-2">
+    <aside className="flex w-64 flex-col border-r border-line bg-paper">
       <div className="region-drag flex items-center justify-between px-3 pb-1 pt-10">
         <span className="px-1 text-sm font-semibold text-fg">hemilier 智能体</span>
         <button
           onClick={() => setCollapsed(true)}
           title="折叠侧栏"
-          className="rounded-md p-1 text-muted transition hover:bg-surface hover:text-fg"
+          className="rounded-md p-1 text-muted transition hover:bg-surface-2 hover:text-fg"
         >
           ☰
         </button>
@@ -350,7 +350,7 @@ export function Sidebar(): JSX.Element {
             key={n.key}
             onClick={() => setView(n.key)}
             className={`mb-0.5 flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm transition ${
-              view === n.key ? 'bg-accent-soft text-accent' : 'text-fg hover:bg-surface'
+              view === n.key ? 'bg-accent-soft text-accent' : 'text-fg hover:bg-surface-2'
             }`}
           >
             <span>{n.icon}</span>
@@ -359,19 +359,19 @@ export function Sidebar(): JSX.Element {
         ))}
         <button
           onClick={() => setCustomizeOpen(true)}
-          className="mb-0.5 flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm text-fg transition hover:bg-surface"
+          className="mb-0.5 flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm text-fg transition hover:bg-surface-2"
         >
           <span>✨</span> Customize
         </button>
         <button
           onClick={() => setRoutinesOpen(true)}
-          className="mb-0.5 flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm text-fg transition hover:bg-surface"
+          className="mb-0.5 flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm text-fg transition hover:bg-surface-2"
         >
           <span>⏰</span> Routines
         </button>
         <button
           onClick={() => setTasksOpen(true)}
-          className="mb-0.5 flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-sm text-fg transition hover:bg-surface"
+          className="mb-0.5 flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-sm text-fg transition hover:bg-surface-2"
         >
           <span className="flex items-center gap-2.5">
             <span>🔄</span> Tasks
@@ -422,7 +422,7 @@ export function Sidebar(): JSX.Element {
       <div className="border-t border-line p-2">
         <button
           onClick={() => setSettingsOpen(true)}
-          className="flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-sm text-fg transition hover:bg-surface"
+          className="flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-sm text-fg transition hover:bg-surface-2"
         >
           <span className="flex items-center gap-2">
             <span>⚙</span> {t('settings')}
