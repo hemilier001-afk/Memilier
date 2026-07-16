@@ -491,7 +491,7 @@ export function SettingsModal(): JSX.Element | null {
                           className={`mt-2 self-end rounded-md px-2 py-0.5 text-xs ${
                             c.installed
                               ? 'border border-line text-muted hover:text-fg'
-                              : 'bg-accent text-white'
+                              : 'border border-line bg-surface-2 text-fg hover:bg-accent-soft'
                           }`}
                         >
                           {c.installed ? t('uninstall') : t('install')}

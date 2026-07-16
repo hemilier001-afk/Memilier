@@ -109,7 +109,7 @@ function MemoryView(): JSX.Element {
         />
         <button
           onClick={() => void add()}
-          className="shrink-0 rounded-md bg-accent px-2 py-1 text-xs text-white hover:bg-accent-hover"
+          className="shrink-0 rounded-md border border-line bg-surface-2 text-fg hover:bg-accent-soft px-2 py-1 text-xs transition"
         >
           {t('memAdd')}
         </button>
@@ -265,7 +265,7 @@ function PreviewView(): JSX.Element {
             <button
               onClick={() => void save()}
               disabled={!dirty || saving}
-              className="rounded-md bg-accent px-2 py-0.5 text-white transition hover:bg-accent-hover disabled:opacity-40"
+              className="rounded-md border border-line bg-surface-2 text-fg hover:bg-accent-soft px-2 py-0.5 transition disabled:opacity-40"
             >
               {saving ? t('saving') : dirty ? t('save') : t('saved')}
             </button>
@@ -451,7 +451,7 @@ function TerminalView(): JSX.Element {
         ) : (
           <button
             onClick={submit}
-            className="rounded-md bg-accent px-2 py-1 text-xs text-white hover:bg-accent-hover"
+            className="rounded-md border border-line bg-surface-2 text-fg hover:bg-accent-soft px-2 py-1 text-xs transition"
           >
             {t('termRun')}
           </button>
@@ -525,7 +525,7 @@ function GitView(): JSX.Element {
             await window.api.gitInit(ws as string)
             await refresh()
           }}
-          className="mt-3 block rounded-lg bg-accent px-3 py-1.5 text-white hover:bg-accent-hover"
+          className="mt-3 block rounded-lg border border-line bg-surface-2 text-fg hover:bg-accent-soft px-3 py-1.5 transition"
         >
           {t('gitInit')}
         </button>
@@ -649,7 +649,7 @@ function GitView(): JSX.Element {
         <button
           onClick={() => void commit()}
           disabled={busy || !msg.trim() || staged.length === 0}
-          className="mt-1 w-full rounded-md bg-accent px-3 py-1.5 text-xs text-white transition hover:bg-accent-hover disabled:opacity-40"
+          className="mt-1 w-full rounded-md border border-line bg-surface-2 text-fg hover:bg-accent-soft px-3 py-1.5 text-xs transition disabled:opacity-40"
         >
           {busy ? t('gitCommitting') : `${t('gitCommit')} (${staged.length})`}
         </button>

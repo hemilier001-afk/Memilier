@@ -29,7 +29,7 @@ export class ErrorBoundary extends Component<Props, State> {
         <div className="flex gap-2">
           <button
             onClick={() => location.reload()}
-            className="rounded-md bg-accent px-3 py-1.5 text-sm text-white"
+            className="rounded-md border border-line bg-surface-2 text-fg hover:bg-accent-soft px-3 py-1.5 text-sm"
           >
             重新加载
           </button>

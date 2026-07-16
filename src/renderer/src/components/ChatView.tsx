@@ -52,7 +52,7 @@ function StarterPrompts(): JSX.Element {
         </ol>
         <button
           onClick={() => setSettingsOpen(true)}
-          className="rounded-lg bg-accent px-4 py-2 text-sm text-white transition hover:opacity-90"
+          className="rounded-lg border border-line bg-surface-2 text-fg hover:bg-accent-soft px-4 py-2 text-sm transition"
         >
           {t('openSettings')}
         </button>

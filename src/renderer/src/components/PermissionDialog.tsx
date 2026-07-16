@@ -109,7 +109,7 @@ export function PermissionDialog(): JSX.Element | null {
           </button>
           <button
             onClick={() => handle(true)}
-            className="rounded-lg bg-accent px-4 py-2 text-sm text-white hover:bg-accent-hover"
+            className="rounded-lg border border-line bg-surface-2 text-fg hover:bg-accent-soft px-4 py-2 text-sm transition"
           >
             {t('permAllow')}
           </button>
