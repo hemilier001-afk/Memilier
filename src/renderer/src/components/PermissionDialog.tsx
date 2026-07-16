@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { lineDiff } from '@shared/diff'
 import { useStore } from '../store'
+import { useT } from '../i18n'
 
 function DiffPre({ before, after }: { before: string; after: string }): JSX.Element {
   return (
@@ -63,6 +64,7 @@ export function PermissionDialog(): JSX.Element | null {
   const queue = useStore((s) => s.permissionQueue)
   const respond = useStore((s) => s.respondPermission)
   const [remember, setRemember] = useState(false)
+  const t = useT()
 
   if (!permission) return null
 
@@ -76,9 +78,11 @@ export function PermissionDialog(): JSX.Element | null {
     <div className="pointer-events-none fixed inset-x-0 bottom-28 z-50 flex justify-center px-4">
       <div className="pointer-events-auto w-[560px] max-w-full rounded-xl border-2 border-accent/60 bg-surface p-4 text-fg shadow-2xl">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold">🔐 需要授权</h2>
+          <h2 className="text-sm font-semibold">{t('permTitle')}</h2>
           {queue.length > 1 && (
-            <span className="text-xs text-muted">还有 {queue.length - 1} 个待处理</span>
+            <span className="text-xs text-muted">
+              {t('permQueue').replace('{n}', String(queue.length - 1))}
+            </span>
           )}
         </div>
         <p className="mt-1 font-mono text-sm text-accent">{permission.description}</p>
@@ -93,7 +97,7 @@ export function PermissionDialog(): JSX.Element | null {
             checked={remember}
             onChange={(e) => setRemember(e.target.checked)}
           />
-          本会话内记住此类操作
+          {t('permRemember')}
         </label>
 
         <div className="mt-4 flex justify-end gap-2">
@@ -101,13 +105,13 @@ export function PermissionDialog(): JSX.Element | null {
             onClick={() => handle(false)}
             className="rounded-lg px-4 py-2 text-sm text-muted transition hover:bg-surface-2 hover:text-fg"
           >
-            拒绝
+            {t('permDeny')}
           </button>
           <button
             onClick={() => handle(true)}
             className="rounded-lg bg-accent px-4 py-2 text-sm text-white hover:bg-accent-hover"
           >
-            允许
+            {t('permAllow')}
           </button>
         </div>
       </div>

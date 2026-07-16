@@ -197,7 +197,7 @@ export const store = {
     const now = Date.now()
     const c: Conversation = {
       id: randomUUID(),
-      title: '新对话',
+      title: settings.language === 'en' ? 'New chat' : '新对话',
       model: settings.defaultModel,
       kind,
       mode: 'auto',

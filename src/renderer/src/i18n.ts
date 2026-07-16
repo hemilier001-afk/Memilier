@@ -118,6 +118,74 @@ const DICT: Dict = {
   aboutDesc: {
     zh: '桌面智能体：对话 + 工具调用 + 文件/命令操作，由本地 Ollama 或云端模型驱动。',
     en: 'A desktop agent: chat + tool use + file/command actions, powered by local Ollama or cloud models.'
+  },
+
+  // 视图模式
+  viewSummary: { zh: '精简', en: 'Summary' },
+  viewNormal: { zh: '标准', en: 'Normal' },
+  viewVerbose: { zh: '详尽', en: 'Verbose' },
+  viewSummaryTip: { zh: '隐藏工具调用，仅看结论', en: 'Hide tool calls, results only' },
+  viewNormalTip: { zh: '工具调用折叠显示', en: 'Tool calls collapsed' },
+  viewVerboseTip: { zh: '展开全部工具调用细节', en: 'Expand all tool call details' },
+
+  // 头部
+  compressBtn: { zh: '压缩', en: 'Compress' },
+  tokenLongTip: {
+    zh: '对话较长，较早消息将被自动裁剪。点击把早期历史压缩成摘要（/compact）',
+    en: 'Long conversation — older messages get trimmed. Click to compact history into a summary (/compact)'
+  },
+  tokenTip: { zh: '当前对话上下文的 token 粗估', en: 'Rough token estimate of this conversation' },
+  sessionsRunning: { zh: '{n} 个会话运行中', en: '{n} sessions running' },
+  sessionsRunningTip: {
+    zh: '其它会话正在生成，点击跳转查看',
+    en: 'Other sessions are generating — click to jump'
+  },
+  moreActions: { zh: '更多操作', en: 'More' },
+  hmCompact: { zh: '📜 压缩上下文（/compact）', en: '📜 Compact context (/compact)' },
+  hmReflect: { zh: '🧠 反思沉淀（记忆/技能）', en: '🧠 Reflect (memory / skills)' },
+  hmExport: { zh: '⬇ 导出对话为 Markdown', en: '⬇ Export as Markdown' },
+  refreshModels: { zh: '刷新模型列表', en: 'Refresh model list' },
+
+  // 消息区
+  copy: { zh: '复制', en: 'Copy' },
+  copied: { zh: '已复制', en: 'Copied' },
+  edit: { zh: '编辑', en: 'Edit' },
+  regenerate: { zh: '重新生成', en: 'Regenerate' },
+  thinking: { zh: '思考中…', en: 'Thinking…' },
+  runningTools: { zh: '执行工具', en: 'Running tools' },
+  toolCallsCount: { zh: '{n} 个工具调用', en: '{n} tool calls' },
+  workedSteps: { zh: '工作了 {n} 步（{s}）', en: 'Worked {n} steps ({s})' },
+  stPending: { zh: '待执行', en: 'Pending' },
+  stRunning: { zh: '执行中…', en: 'Running…' },
+  stDone: { zh: '完成', en: 'Done' },
+  stError: { zh: '失败', en: 'Failed' },
+  stDenied: { zh: '已拒绝', en: 'Denied' },
+
+  // 授权卡
+  permTitle: { zh: '🔐 需要授权', en: '🔐 Approval required' },
+  permQueue: { zh: '还有 {n} 个待处理', en: '{n} more pending' },
+  permRemember: { zh: '本会话内记住此类操作', en: 'Remember for this session' },
+  permAllow: { zh: '允许', en: 'Allow' },
+  permDeny: { zh: '拒绝', en: 'Deny' },
+
+  // 侧栏行操作
+  rename: { zh: '重命名', en: 'Rename' },
+  pin: { zh: '置顶', en: 'Pin' },
+  unpin: { zh: '取消置顶', en: 'Unpin' },
+  deleteChat: { zh: '删除', en: 'Delete' },
+  confirmDeleteChat: {
+    zh: '删除对话「{t}」？此操作不可撤销。',
+    en: 'Delete "{t}"? This cannot be undone.'
+  },
+  generating: { zh: '正在生成', en: 'Generating' },
+
+  // 起步提示
+  starter1: { zh: '列出当前工作区的文件结构', en: 'List the files in my workspace' },
+  starter2: { zh: '在工作区里搜索 TODO 注释', en: 'Search the workspace for TODO comments' },
+  starter3: { zh: '创建一个 hello.txt，写入一句问候', en: 'Create hello.txt with a greeting' },
+  starter4: {
+    zh: '这个项目是做什么的？帮我快速梳理一下',
+    en: 'What does this project do? Give me a quick tour'
   }
 }
 

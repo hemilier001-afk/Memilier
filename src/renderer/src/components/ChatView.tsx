@@ -4,12 +4,8 @@ import { useStore, type ToolView } from '../store'
 import { useT } from '../i18n'
 import { MessageView, StreamingBubble } from './Message'
 
-const STARTERS = [
-  { icon: '📂', text: '列出当前工作区的文件结构' },
-  { icon: '🔍', text: '在工作区里搜索 TODO 注释' },
-  { icon: '✍️', text: '创建一个 hello.txt，写入一句问候' },
-  { icon: '🧠', text: '这个项目是做什么的？帮我快速梳理一下' }
-]
+const STARTERS = ['starter1', 'starter2', 'starter3', 'starter4'] as const
+const STARTER_ICONS = ['📂', '🔍', '✍️', '🧠']
 
 function StarterPrompts(): JSX.Element {
   const send = useStore((s) => s.send)
@@ -60,14 +56,14 @@ function StarterPrompts(): JSX.Element {
         </div>
       )}
       <div className="mx-auto grid max-w-xl grid-cols-1 gap-2 sm:grid-cols-2">
-        {STARTERS.map((s) => (
+        {STARTERS.map((key, i) => (
           <button
-            key={s.text}
-            onClick={() => send(s.text)}
+            key={key}
+            onClick={() => send(t(key))}
             className="rounded-xl border border-line bg-surface px-4 py-3 text-left text-sm text-fg transition hover:border-accent hover:text-accent"
           >
-            <span className="mr-2">{s.icon}</span>
-            {s.text}
+            <span className="mr-2">{STARTER_ICONS[i]}</span>
+            {t(key)}
           </button>
         ))}
       </div>
@@ -75,22 +71,23 @@ function StarterPrompts(): JSX.Element {
   )
 }
 
-const TOOL_VIEWS: { key: ToolView; label: string; title: string }[] = [
-  { key: 'summary', label: '精简', title: '隐藏工具调用，仅看结论' },
-  { key: 'normal', label: '标准', title: '工具调用折叠显示' },
-  { key: 'verbose', label: '详尽', title: '展开全部工具调用细节' }
-]
+const TOOL_VIEWS = [
+  { key: 'summary', label: 'viewSummary', title: 'viewSummaryTip' },
+  { key: 'normal', label: 'viewNormal', title: 'viewNormalTip' },
+  { key: 'verbose', label: 'viewVerbose', title: 'viewVerboseTip' }
+] as const
 
 function ViewModeToggle(): JSX.Element {
   const toolView = useStore((s) => s.toolView)
   const setToolView = useStore((s) => s.setToolView)
+  const t = useT()
   return (
     <div className="flex items-center rounded-lg border border-line p-0.5 text-xs">
       {TOOL_VIEWS.map((v) => (
         <button
           key={v.key}
-          onClick={() => setToolView(v.key)}
-          title={v.title}
+          onClick={() => setToolView(v.key as ToolView)}
+          title={t(v.title)}
           className={`rounded-md px-2 py-1 transition ${
             toolView === v.key ? 'bg-accent-soft text-accent' : 'text-muted hover:text-fg'
           }`}
@@ -103,6 +100,7 @@ function ViewModeToggle(): JSX.Element {
 }
 
 function ModelSelector(): JSX.Element {
+  const t = useT()
   const models = useStore((s) => s.models)
   const active = useStore((s) => s.active)
   const settings = useStore((s) => s.settings)
@@ -136,7 +134,7 @@ function ModelSelector(): JSX.Element {
       </select>
       <button
         onClick={() => void refreshModels()}
-        title="刷新模型列表"
+        title={t('refreshModels')}
         className="text-sm text-muted transition hover:text-fg"
       >
         ↻
@@ -149,6 +147,7 @@ function TokenMeter(): JSX.Element | null {
   const active = useStore((s) => s.active)
   const compact = useStore((s) => s.compact)
   const streaming = useStore((s) => s.streaming)
+  const t = useT()
   if (!active || active.messages.length === 0) return null
   const chars = active.messages.reduce((n, m) => n + (m.content?.length ?? 0), 0)
   const tokens = Math.ceil(chars / 3) // 粗估：CJK 偏保守
@@ -159,15 +158,15 @@ function TokenMeter(): JSX.Element | null {
     return (
       <button
         onClick={() => !streaming && void compact()}
-        title="对话较长，较早消息将被自动裁剪。点击把早期历史压缩成摘要（/compact）"
+        title={t('tokenLongTip')}
         className="rounded-md border border-line px-1.5 py-0.5 text-xs text-muted transition hover:bg-surface-2 hover:text-fg"
       >
-        {label} tokens ⚠ 压缩
+        {label} tokens ⚠ {t('compressBtn')}
       </button>
     )
   }
   return (
-    <span title="当前对话上下文的 token 粗估" className="text-xs text-muted">
+    <span title={t('tokenTip')} className="text-xs text-muted">
       {label} tokens
     </span>
   )
@@ -179,7 +178,8 @@ function renderGrouped(
   messages: MsgType[],
   streaming: boolean,
   lastAssistantId: string | null,
-  regenerate: () => void
+  regenerate: () => void,
+  t: (key: never) => string
 ): JSX.Element[] {
   const items: JSX.Element[] = []
   let buf: MsgType[] = []
@@ -200,7 +200,9 @@ function renderGrouped(
           <summary className="flex cursor-pointer list-none items-center gap-2 py-0.5 text-xs text-muted transition hover:text-fg [&::-webkit-details-marker]:hidden">
             <span>⚙️</span>
             <span className="truncate">
-              工作了 {steps.length} 步（{stat}）
+              {(t as (k: string) => string)('workedSteps')
+                .replace('{n}', String(steps.length))
+                .replace('{s}', stat)}
             </span>
             <span className="shrink-0 opacity-60">▸</span>
           </summary>
@@ -238,6 +240,7 @@ function renderGrouped(
 
 // 其它会话正在后台生成时的头部徽标：并行任务一眼可见，点击跳转过去（跨空间自动切换）
 function RunningBadge(): JSX.Element | null {
+  const t = useT()
   const runningIds = useStore((s) => s.runningIds)
   const active = useStore((s) => s.active)
   const conversations = useStore((s) => s.conversations)
@@ -256,11 +259,11 @@ function RunningBadge(): JSX.Element | null {
   return (
     <button
       onClick={jump}
-      title="其它会话正在生成，点击跳转查看"
+      title={t('sessionsRunningTip')}
       className="flex items-center gap-1.5 rounded-full border border-accent/40 bg-accent-soft px-2.5 py-0.5 text-xs text-accent transition hover:border-accent"
     >
       <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-accent" />
-      {others.length} 个会话运行中
+      {t('sessionsRunning').replace('{n}', String(others.length))}
     </button>
   )
 }
@@ -274,6 +277,7 @@ function HeaderMenu({
   streaming: boolean
 }): JSX.Element {
   const [open, setOpen] = useState(false)
+  const t = useT()
   const item =
     'block w-full px-3 py-1.5 text-left text-xs text-fg transition hover:bg-surface-2 disabled:opacity-40'
   const run = (fn: () => void): void => {
@@ -284,7 +288,7 @@ function HeaderMenu({
     <div className="relative">
       <button
         onClick={() => setOpen((v) => !v)}
-        title="更多操作"
+        title={t('moreActions')}
         className="rounded-md border border-line px-2 py-1 text-sm text-muted transition hover:text-fg"
       >
         ⋯
@@ -298,17 +302,17 @@ function HeaderMenu({
               disabled={disabled || streaming}
               onClick={() => run(() => void useStore.getState().compact())}
             >
-              📜 压缩上下文（/compact）
+              {t('hmCompact')}
             </button>
             <button
               className={item}
               disabled={disabled || streaming}
               onClick={() => run(() => useStore.getState().reflect())}
             >
-              🧠 反思沉淀（记忆/技能）
+              {t('hmReflect')}
             </button>
             <button className={item} onClick={() => run(() => useStore.getState().exportActive())}>
-              ⬇ 导出对话为 Markdown
+              {t('hmExport')}
             </button>
           </div>
         </>
@@ -1019,7 +1023,7 @@ export function ChatView(): JSX.Element {
           {active.messages.length === 0 && !showStreaming ? (
             <StarterPrompts />
           ) : (
-            renderGrouped(active.messages, streaming, lastAssistantId, regenerate)
+            renderGrouped(active.messages, streaming, lastAssistantId, regenerate, t as never)
           )}
           {showStreaming && <StreamingBubble text={streamingText} />}
         </div>

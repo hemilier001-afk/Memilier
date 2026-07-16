@@ -38,6 +38,7 @@ function groupByTime(convs: Conversation[]): { key: TimeKey; items: Conversation
 }
 
 function ConvRow({ c }: { c: Conversation }): JSX.Element {
+  const t = useT()
   const active = useStore((s) => s.active)
   const running = useStore((s) => s.runningIds.includes(c.id))
   const activeProjectId = useStore((s) => s.activeProjectId)
@@ -86,7 +87,7 @@ function ConvRow({ c }: { c: Conversation }): JSX.Element {
       <span className="flex min-w-0 items-center gap-1.5">
         {running && (
           <span
-            title="正在生成"
+            title={t('generating')}
             className="inline-block h-2 w-2 shrink-0 animate-pulse rounded-full bg-accent"
           />
         )}
@@ -99,7 +100,7 @@ function ConvRow({ c }: { c: Conversation }): JSX.Element {
             startEdit()
           }}
           className="text-muted hover:text-accent"
-          title="重命名"
+          title={t('rename')}
         >
           ✎
         </button>
@@ -127,18 +128,18 @@ function ConvRow({ c }: { c: Conversation }): JSX.Element {
             })
           }}
           className={c.pinned ? 'text-accent' : 'text-muted hover:text-accent'}
-          title={c.pinned ? '取消置顶' : '置顶'}
+          title={c.pinned ? t('unpin') : t('pin')}
         >
           📌
         </button>
         <button
           onClick={(e) => {
             e.stopPropagation()
-            if (window.confirm(`删除对话「${c.title}」？此操作不可撤销。`))
+            if (window.confirm(t('confirmDeleteChat').replace('{t}', c.title)))
               void deleteConversation(c.id)
           }}
           className="text-muted hover:text-red-500"
-          title="删除"
+          title={t('deleteChat')}
         >
           ✕
         </button>

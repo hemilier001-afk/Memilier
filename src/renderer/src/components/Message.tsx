@@ -6,6 +6,7 @@ import rehypeHighlight from 'rehype-highlight'
 import rehypeKatex from 'rehype-katex'
 import type { Message as Msg, ToolCall } from '@shared/types'
 import { useStore } from '../store'
+import { useT } from '../i18n'
 
 // 图片可能是内联 data URL（乐观回显/旧数据）或文件引用（himg:），后者经 IPC 还原为 data URL
 function MessageImage({ source }: { source: string }): JSX.Element | null {
@@ -29,13 +30,13 @@ function MessageImage({ source }: { source: string }): JSX.Element | null {
   )
 }
 
-const STATUS_LABEL: Record<ToolCall['status'], string> = {
-  pending: '待执行',
-  running: '执行中…',
-  done: '完成',
-  error: '失败',
-  denied: '已拒绝'
-}
+const STATUS_KEY = {
+  pending: 'stPending',
+  running: 'stRunning',
+  done: 'stDone',
+  error: 'stError',
+  denied: 'stDenied'
+} as const
 
 const STATUS_COLOR: Record<ToolCall['status'], string> = {
   pending: 'text-muted',
@@ -48,13 +49,14 @@ const STATUS_COLOR: Record<ToolCall['status'], string> = {
 function CopyButton({
   getText,
   className,
-  label = '复制'
+  label
 }: {
   getText: () => string
   className?: string
   label?: string
 }): JSX.Element {
   const [copied, setCopied] = useState(false)
+  const t = useT()
   return (
     <button
       onClick={async () => {
@@ -74,7 +76,7 @@ function CopyButton({
       }}
       className={className}
     >
-      {copied ? '已复制' : label}
+      {copied ? t('copied') : (label ?? t('copy'))}
     </button>
   )
 }
@@ -117,6 +119,7 @@ export function Markdown({ text }: { text: string }): JSX.Element {
 
 function ToolCallCard({ tc }: { tc: ToolCall }): JSX.Element | null {
   const mode = useStore((s) => s.toolView)
+  const t = useT()
   if (mode === 'summary') return null // 精简模式只看结论
 
   return (
@@ -126,7 +129,7 @@ function ToolCallCard({ tc }: { tc: ToolCall }): JSX.Element | null {
     >
       <summary className="flex cursor-pointer items-center gap-2 px-3 py-2">
         <span className="font-mono text-xs text-accent">🛠 {tc.name}</span>
-        <span className={`text-xs ${STATUS_COLOR[tc.status]}`}>{STATUS_LABEL[tc.status]}</span>
+        <span className={`text-xs ${STATUS_COLOR[tc.status]}`}>{t(STATUS_KEY[tc.status])}</span>
       </summary>
       <div className="space-y-2 px-3 pb-3">
         <pre className="overflow-x-auto rounded bg-paper p-2 text-xs">
@@ -152,6 +155,7 @@ export function MessageView({
 }): JSX.Element | null {
   const setPendingEdit = useStore((s) => s.setPendingEdit)
   const toolView = useStore((s) => s.toolView)
+  const t = useT()
   if (message.role === 'tool') return null // 工具结果显示在 assistant 的工具卡片里
 
   // 过程步骤（带工具调用的 assistant 消息）：仿 Claude 收纳成弱化的可折叠块，
@@ -166,7 +170,8 @@ export function MessageView({
         <summary className="flex cursor-pointer list-none items-center gap-2 py-0.5 text-xs text-muted transition hover:text-fg [&::-webkit-details-marker]:hidden">
           <span className={running ? 'animate-pulse' : ''}>⚙️</span>
           <span className="truncate">
-            {firstLine || '执行工具'} · {message.toolCalls.length} 个工具调用
+            {firstLine || t('runningTools')} ·{' '}
+            {t('toolCallsCount').replace('{n}', String(message.toolCalls.length))}
           </span>
           <span className="shrink-0 opacity-60">▸</span>
         </summary>
@@ -206,7 +211,7 @@ export function MessageView({
             onClick={() => setPendingEdit({ id: message.id, content: message.content })}
             className="text-xs text-muted transition hover:text-fg"
           >
-            编辑
+            {t('edit')}
           </button>
           <CopyButton
             getText={() => message.content}
@@ -238,7 +243,7 @@ export function MessageView({
                 onClick={onRegenerate}
                 className="text-xs text-muted transition hover:text-fg"
               >
-                重新生成
+                {t('regenerate')}
               </button>
             )}
           </div>
@@ -267,6 +272,7 @@ function AssistantAvatar({ active = false }: { active?: boolean }): JSX.Element 
 }
 
 export function StreamingBubble({ text }: { text: string }): JSX.Element {
+  const t = useT()
   return (
     <div className="flex gap-3">
       <AssistantAvatar active />
@@ -278,7 +284,7 @@ export function StreamingBubble({ text }: { text: string }): JSX.Element {
             <span className="cursor-blink text-accent" />
           </div>
         ) : (
-          <span className="text-sm text-muted">思考中…</span>
+          <span className="text-sm text-muted">{t('thinking')}</span>
         )}
       </div>
     </div>
