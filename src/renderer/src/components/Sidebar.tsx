@@ -314,7 +314,7 @@ export function Sidebar(): JSX.Element {
   return (
     <aside className="flex w-64 flex-col border-r border-line bg-paper">
       <div className="region-drag flex items-center justify-between px-3 pb-1 pt-10">
-        <span className="px-1 text-sm font-semibold text-fg">hemilier 智能体</span>
+        <span className="px-1 text-sm font-semibold text-fg">{t('brandName')}</span>
         <button
           onClick={() => setCollapsed(true)}
           title="折叠侧栏"

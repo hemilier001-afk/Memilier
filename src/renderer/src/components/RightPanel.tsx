@@ -185,7 +185,7 @@ function Entry({
         <button
           style={pad}
           onClick={() => setOpen((o) => !o)}
-          className="flex w-full items-center gap-1 py-1 text-left text-sm hover:bg-surface"
+          className="flex w-full items-center gap-1 py-1 text-left text-sm hover:bg-surface-2"
         >
           <span className="text-xs">{open ? '📂' : '📁'}</span>
           <span className="truncate">{entry.name}</span>
@@ -199,7 +199,7 @@ function Entry({
     <button
       style={pad}
       onClick={() => void openFile(rel)}
-      className={`flex w-full items-center gap-1 py-1 text-left text-sm hover:bg-surface ${
+      className={`flex w-full items-center gap-1 py-1 text-left text-sm hover:bg-surface-2 ${
         isSelected ? 'bg-accent-soft text-accent' : ''
       }`}
     >
@@ -442,7 +442,7 @@ function TerminalView(): JSX.Element {
         {running ? (
           <button
             onClick={kill}
-            className="rounded-md border border-line px-2 py-1 text-xs text-fg hover:bg-surface"
+            className="rounded-md border border-line px-2 py-1 text-xs text-fg hover:bg-surface-2"
           >
             停止
           </button>
@@ -569,7 +569,7 @@ function GitView(): JSX.Element {
   const Row = ({ f, isStaged }: { f: GitStatus['files'][0]; isStaged: boolean }): JSX.Element => (
     <div
       onClick={() => void view(f.path, isStaged)}
-      className={`group flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-xs transition hover:bg-surface ${
+      className={`group flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-xs transition hover:bg-surface-2 ${
         sel?.path === f.path && sel?.staged === isStaged ? 'bg-accent-soft' : ''
       }`}
     >
@@ -705,13 +705,13 @@ export function RightPanel(): JSX.Element | null {
       .pop() || active?.workspaceDir
 
   return (
-    <aside className="flex w-96 flex-col border-l border-line bg-surface-2">
+    <aside className="flex w-96 flex-col border-l border-line bg-paper">
       <div className="region-drag flex items-center justify-between border-b border-line px-3 pb-1 pt-10">
         <span className="text-sm font-semibold text-fg">工作区</span>
         <button
           onClick={toggle}
           title="关闭面板"
-          className="rounded-md p-1 text-muted transition hover:bg-surface hover:text-fg"
+          className="rounded-md p-1 text-muted transition hover:bg-surface-2 hover:text-fg"
         >
           ✕
         </button>

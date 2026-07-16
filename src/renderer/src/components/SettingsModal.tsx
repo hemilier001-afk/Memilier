@@ -610,7 +610,7 @@ export function SettingsModal(): JSX.Element | null {
 
             {cat === 'about' && (
               <div className="space-y-2">
-                <div className="text-lg font-semibold">hemilier 桌面智能体</div>
+                <div className="text-lg font-semibold">{t('appTagline')}</div>
                 <div className="text-xs text-muted">v0.1.0</div>
                 <p className="text-muted">{t('aboutDesc')}</p>
               </div>

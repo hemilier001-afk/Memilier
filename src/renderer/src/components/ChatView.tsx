@@ -985,7 +985,7 @@ export function ChatView(): JSX.Element {
       <main className="relative flex flex-1 items-center justify-center text-muted">
         <div className="region-drag absolute inset-x-0 top-0 h-10" />
         <div className="text-center">
-          <p className="text-lg text-fg">hemilier 桌面智能体</p>
+          <p className="text-lg text-fg">{t('appTagline')}</p>
           <p className="mt-1 text-sm">{t('emptySubtitle')}</p>
         </div>
       </main>

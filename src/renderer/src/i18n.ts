@@ -128,6 +128,8 @@ const DICT: Dict = {
   viewNormalTip: { zh: '工具调用折叠显示', en: 'Tool calls collapsed' },
   viewVerboseTip: { zh: '展开全部工具调用细节', en: 'Expand all tool call details' },
   viewDensity: { zh: '工具过程详略', en: 'Detail level' },
+  brandName: { zh: 'hemilier 智能体', en: 'hemilier' },
+  appTagline: { zh: 'hemilier 桌面智能体', en: 'hemilier desktop agent' },
 
   // 头部
   compressBtn: { zh: '压缩', en: 'Compress' },
