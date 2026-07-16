@@ -1,7 +1,7 @@
 import { useStore } from '../store'
 
 const STATUS: Record<string, { label: string; cls: string }> = {
-  running: { label: '运行中', cls: 'text-amber-500' },
+  running: { label: '运行中', cls: 'text-muted' },
   done: { label: '已完成', cls: 'text-green-500' },
   error: { label: '失败', cls: 'text-red-500' }
 }

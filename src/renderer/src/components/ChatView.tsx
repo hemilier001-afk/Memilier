@@ -160,7 +160,7 @@ function TokenMeter(): JSX.Element | null {
       <button
         onClick={() => !streaming && void compact()}
         title="对话较长，较早消息将被自动裁剪。点击把早期历史压缩成摘要（/compact）"
-        className="rounded-md border border-amber-400/50 px-1.5 py-0.5 text-xs text-amber-500 transition hover:bg-amber-500/10"
+        className="rounded-md border border-line px-1.5 py-0.5 text-xs text-muted transition hover:bg-surface-2 hover:text-fg"
       >
         {label} tokens ⚠ 压缩
       </button>

@@ -69,7 +69,7 @@ function MemoryView(): JSX.Element {
                   {MEM_LABEL[e.type] ?? e.type}
                 </span>
                 <span>{new Date(e.createdAt).toLocaleDateString()}</span>
-                {stale && <span className="text-amber-500">⚠较旧</span>}
+                {stale && <span className="text-muted">⚠较旧</span>}
                 {e.source && <span className="truncate">· {e.source}</span>}
                 <button
                   onClick={() => void forget(e.id)}

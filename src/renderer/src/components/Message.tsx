@@ -39,7 +39,7 @@ const STATUS_LABEL: Record<ToolCall['status'], string> = {
 
 const STATUS_COLOR: Record<ToolCall['status'], string> = {
   pending: 'text-muted',
-  running: 'text-amber-500',
+  running: 'text-muted',
   done: 'text-green-500',
   error: 'text-red-500',
   denied: 'text-muted'
