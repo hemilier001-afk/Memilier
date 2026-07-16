@@ -77,28 +77,6 @@ const TOOL_VIEWS = [
   { key: 'verbose', label: 'viewVerbose', title: 'viewVerboseTip' }
 ] as const
 
-function ViewModeToggle(): JSX.Element {
-  const toolView = useStore((s) => s.toolView)
-  const setToolView = useStore((s) => s.setToolView)
-  const t = useT()
-  return (
-    <div className="flex items-center rounded-lg border border-line p-0.5 text-xs">
-      {TOOL_VIEWS.map((v) => (
-        <button
-          key={v.key}
-          onClick={() => setToolView(v.key as ToolView)}
-          title={t(v.title)}
-          className={`rounded-md px-2 py-1 transition ${
-            toolView === v.key ? 'bg-accent-soft text-accent' : 'text-muted hover:text-fg'
-          }`}
-        >
-          {v.label}
-        </button>
-      ))}
-    </div>
-  )
-}
-
 function ModelSelector(): JSX.Element {
   const t = useT()
   const models = useStore((s) => s.models)
@@ -278,6 +256,7 @@ function HeaderMenu({
 }): JSX.Element {
   const [open, setOpen] = useState(false)
   const t = useT()
+  const toolView = useStore((s) => s.toolView)
   const item =
     'block w-full px-3 py-1.5 text-left text-xs text-fg transition hover:bg-surface-2 disabled:opacity-40'
   const run = (fn: () => void): void => {
@@ -314,6 +293,23 @@ function HeaderMenu({
             <button className={item} onClick={() => run(() => useStore.getState().exportActive())}>
               {t('hmExport')}
             </button>
+            <div className="my-1 border-t border-line" />
+            <p className="px-3 py-1 text-[10px] uppercase tracking-wide text-muted">
+              {t('viewDensity')}
+            </p>
+            {TOOL_VIEWS.map((v) => (
+              <button
+                key={v.key}
+                title={t(v.title)}
+                className={item}
+                onClick={() => run(() => useStore.getState().setToolView(v.key as ToolView))}
+              >
+                <span className="inline-block w-4 text-accent">
+                  {toolView === v.key ? '✓' : ''}
+                </span>
+                {t(v.label)}
+              </button>
+            ))}
           </div>
         </>
       )}
@@ -1005,7 +1001,6 @@ export function ChatView(): JSX.Element {
         <div className="flex items-center gap-3">
           <RunningBadge />
           <TokenMeter />
-          <ViewModeToggle />
           {view === 'chat' && <WorkspacePicker dir={active.workspaceDir} />}
           <ModelSelector />
           <HeaderMenu disabled={active.messages.length === 0} streaming={streaming} />

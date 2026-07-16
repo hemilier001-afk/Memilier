@@ -127,6 +127,7 @@ const DICT: Dict = {
   viewSummaryTip: { zh: '隐藏工具调用，仅看结论', en: 'Hide tool calls, results only' },
   viewNormalTip: { zh: '工具调用折叠显示', en: 'Tool calls collapsed' },
   viewVerboseTip: { zh: '展开全部工具调用细节', en: 'Expand all tool call details' },
+  viewDensity: { zh: '工具过程详略', en: 'Detail level' },
 
   // 头部
   compressBtn: { zh: '压缩', en: 'Compress' },
