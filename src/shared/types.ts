@@ -167,6 +167,8 @@ export interface Settings {
   asrModel?: string
   /** 输入框发送方式：enter=回车发送(Shift+Enter 换行)；mod-enter=⌘/Ctrl+Enter 发送 */
   submitKey?: 'enter' | 'mod-enter'
+  /** 本地个人资料（昵称用于问候语；仅存本机，将来可替换为云端账号体系） */
+  profile?: { name?: string; email?: string }
 }
 
 export interface ModelInfo {

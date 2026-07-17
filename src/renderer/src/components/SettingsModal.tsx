@@ -204,6 +204,34 @@ export function SettingsModal(): JSX.Element | null {
             {cat === 'general' && (
               <>
                 <div>
+                  <label className="mb-1 block font-medium">{t('profileSection')}</label>
+                  <div className="flex gap-2">
+                    <input
+                      key={`pname-${settings.profile?.name ?? ''}`}
+                      defaultValue={settings.profile?.name ?? ''}
+                      placeholder={t('profileName')}
+                      onBlur={(e) =>
+                        void update({
+                          profile: { ...settings.profile, name: e.target.value.trim() }
+                        })
+                      }
+                      className={input}
+                    />
+                    <input
+                      key={`pmail-${settings.profile?.email ?? ''}`}
+                      defaultValue={settings.profile?.email ?? ''}
+                      placeholder={t('profileEmail')}
+                      onBlur={(e) =>
+                        void update({
+                          profile: { ...settings.profile, email: e.target.value.trim() }
+                        })
+                      }
+                      className={input}
+                    />
+                  </div>
+                  <p className="mt-1 text-xs text-muted">{t('profileNamePh')}</p>
+                </div>
+                <div>
                   <label className="mb-1 block font-medium">{t('language')}</label>
                   <select
                     value={settings.language}

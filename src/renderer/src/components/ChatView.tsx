@@ -62,8 +62,12 @@ function StarterPrompts(): JSX.Element {
 
   return (
     <div className="text-center">
-      {/* Claude 式衬线问候语 */}
-      <p className="font-display mb-6 text-3xl text-fg">{t('starterHint')}</p>
+      {/* Claude 式衬线问候语；设置了昵称则个性化 */}
+      <p className="font-display mb-6 text-3xl text-fg">
+        {settings?.profile?.name?.trim()
+          ? t('greetHello').replace('{n}', settings.profile.name.trim())
+          : t('starterHint')}
+      </p>
       {view !== 'chat' && (
         <div className="mx-auto mb-4 max-w-xl rounded-lg border border-line bg-surface-2 px-4 py-2 text-xs text-muted">
           {t('curWorkspace')}

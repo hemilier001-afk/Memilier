@@ -300,6 +300,16 @@ const DICT: Dict = {
   },
   slashSettings: { zh: '打开设置', en: 'Open Settings' },
 
+  // 个人资料
+  profileSection: { zh: '个人资料', en: 'Profile' },
+  profileName: { zh: '昵称', en: 'Name' },
+  profileNamePh: {
+    zh: '填写后问候语变为「你好，XX。」',
+    en: 'Shown in the greeting, e.g. “Hello, XX.”'
+  },
+  profileEmail: { zh: '邮箱（可选）', en: 'Email (optional)' },
+  greetHello: { zh: '你好，{n}。', en: 'Hello, {n}.' },
+
   // 起步提示
   starter1: { zh: '列出当前工作区的文件结构', en: 'List the files in my workspace' },
   starter2: { zh: '在工作区里搜索 TODO 注释', en: 'Search the workspace for TODO comments' },
