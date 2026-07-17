@@ -181,7 +181,8 @@ body {
    注意：链里不能放 -apple-system——SF 含全角标点字形但无汉字，会把「？」抢走
    导致标点与汉字风格打架；直接 Georgia → 苹方/雅黑，保证汉字和全角标点同源。 */
 .font-display {
-  font-family: Georgia, 'Times New Roman', 'PingFang SC', 'Microsoft YaHei', serif;
+  /* Times 优先：Georgia 的「?」字形墨点粗重、弧线夸张，大字号下与字母不协调 */
+  font-family: 'Times New Roman', Georgia, 'PingFang SC', 'Microsoft YaHei', serif;
   letter-spacing: 0.01em;
 }
 
