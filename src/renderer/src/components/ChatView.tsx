@@ -614,6 +614,7 @@ function Composer(): JSX.Element {
   const [files, setFiles] = useState<string[]>([])
   const [images, setImages] = useState<string[]>([])
   const [atQuery, setAtQuery] = useState<string | null>(null)
+  const [memToast, setMemToast] = useState(false) // # 快捷记忆的保存提示
   const [selIdx, setSelIdx] = useState(0) // 斜杠/@ 菜单的键盘高亮项
   const streaming = useStore((s) => s.streaming)
   const send = useStore((s) => s.send)
@@ -748,6 +749,19 @@ function Composer(): JSX.Element {
   }
 
   const submit = (): void => {
+    // # 开头：快捷存入项目记忆（Claude Code 同款；用户亲手输入=可信，不经授权框）
+    if (!editingId && text.trim().startsWith('#')) {
+      const memText = text.trim().replace(/^#+\s*/, '')
+      if (memText && active) {
+        void window.api.addMemory(active.workspaceDir, memText, 'fact')
+        setMemToast(true)
+        setTimeout(() => setMemToast(false), 2000)
+      }
+      setText('')
+      setAtQuery(null)
+      if (ref.current) ref.current.style.height = 'auto'
+      return
+    }
     if (streaming || (!text.trim() && images.length === 0)) return
     if (editingId) {
       void editResend(editingId, text)
@@ -841,6 +855,16 @@ function Composer(): JSX.Element {
           </div>
         )}
 
+        {!editingId && text.trimStart().startsWith('#') && (
+          <div className="mb-1 rounded-lg bg-accent-soft px-3 py-1 text-xs text-accent">
+            {t('memHashHint')}
+          </div>
+        )}
+        {memToast && (
+          <div className="mb-1 rounded-lg bg-accent-soft px-3 py-1 text-xs text-accent">
+            {t('memSavedToast')}
+          </div>
+        )}
         <div className="rounded-2xl border border-line bg-surface px-3 py-2.5 shadow-sm transition focus-within:border-accent focus-within:shadow-md">
           {images.length > 0 && (
             <div className="mb-2 flex flex-wrap gap-2">

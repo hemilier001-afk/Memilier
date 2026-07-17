@@ -50,8 +50,13 @@ const api: Api = {
   gitCommit: (ws, message) => ipcRenderer.invoke('git:commit', ws, message),
   gitInit: (ws) => ipcRenderer.invoke('git:init', ws),
   listMemory: (ws) => ipcRenderer.invoke('memory:list', ws),
-  addMemory: (ws, text, type) => ipcRenderer.invoke('memory:add', ws, text, type),
+  addMemory: (ws, text, type, scope) => ipcRenderer.invoke('memory:add', ws, text, type, scope),
   forgetMemory: (ws, id) => ipcRenderer.invoke('memory:forget', ws, id),
+  resolvePendingMemory: (ws, id, adopt) =>
+    ipcRenderer.invoke('memory:resolvePending', ws, id, adopt),
+  consolidateMemory: (ws, scope) => ipcRenderer.invoke('memory:consolidate', ws, scope),
+  applyConsolidation: (ws, scope, entries) =>
+    ipcRenderer.invoke('memory:applyConsolidation', ws, scope, entries),
   readWorkspaceFile: (workspaceDir, relPath) =>
     ipcRenderer.invoke('workspace:readFile', workspaceDir, relPath),
   writeWorkspaceFile: (workspaceDir, relPath, content) =>
@@ -98,6 +103,11 @@ const api: Api = {
     const listener = (_e: unknown, tasks: Parameters<typeof cb>[0]): void => cb(tasks)
     ipcRenderer.on('tasks:update', listener)
     return () => ipcRenderer.removeListener('tasks:update', listener)
+  },
+  onMemoryUpdated: (cb) => {
+    const listener = (): void => cb()
+    ipcRenderer.on('memory:updated', listener)
+    return () => ipcRenderer.removeListener('memory:updated', listener)
   },
   onConversationsUpdated: (cb) => {
     const listener = (): void => cb()

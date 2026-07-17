@@ -271,8 +271,71 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   })
 
   // ——— 项目记忆（治理：类型/来源/时间/可删除） ———
-  ipcMain.handle('memory:list', (_e, ws: string) => memory.list(ws))
-  ipcMain.handle('memory:add', (_e, ws: string, text: string, type: MemoryType) =>
+  ipcMain.handle('memory:list', (_e, ws: string) => memory.listAll(ws))
+  ipcMain.handle('memory:resolvePending', (_e, ws: string, id: string, adopt: boolean) =>
+    memory.resolvePending(ws, id, adopt)
+  )
+  // 记忆整理：让模型通读某一层的全部条目，产出合并/去重/修订后的新列表（仅提案，确认后 apply）
+  ipcMain.handle('memory:consolidate', async (_e, ws: string, scope: 'global' | 'project') => {
+    const entries = await memory.list(ws, scope)
+    if (entries.length < 2) return { ok: false, error: '条目太少，无需整理' }
+    const settings = store.getSettings()
+    const modelId = settings.defaultModel
+    if (!bareModel(modelId)) return { ok: false, error: '尚未选择模型' }
+    try {
+      const provider = resolveProvider(modelId, settings)
+      const listing = entries
+        .map((e) => `- [${e.type}] ${e.text}`)
+        .join('\n')
+        .slice(0, 12_000)
+      const { content } = await provider.chat({
+        model: bareModel(modelId),
+        messages: [
+          {
+            id: 's',
+            role: 'system',
+            content:
+              '你是记忆整理器。合并重复/相近条目、删除明显过时或互相矛盾的旧条目、保留有长期价值的信息，逐条重写得更简洁。只输出 JSON 数组，每项形如 {"text":"…","type":"fact|preference|decision|pitfall|todo"}，不要输出其它任何文字。',
+            createdAt: 0
+          },
+          { id: 'u', role: 'user', content: listing, createdAt: 0 }
+        ]
+      })
+      const m = content.match(/\[[\s\S]*\]/)
+      if (!m) return { ok: false, error: '模型未返回有效 JSON' }
+      const arr = JSON.parse(m[0]) as { text?: string; type?: string }[]
+      const TYPES = new Set(['fact', 'preference', 'decision', 'pitfall', 'todo'])
+      const now = Date.now()
+      const proposed = arr
+        .filter((x) => typeof x.text === 'string' && x.text.trim())
+        .map((x) => ({
+          id: randomUUID(),
+          text: x.text!.trim(),
+          type: (TYPES.has(x.type ?? '') ? x.type : 'fact') as MemoryType,
+          source: '记忆整理',
+          createdAt: now,
+          updatedAt: now
+        }))
+      if (!proposed.length) return { ok: false, error: '整理结果为空，已放弃' }
+      return { ok: true, before: entries.length, proposed }
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  })
+  ipcMain.handle(
+    'memory:applyConsolidation',
+    async (_e, ws: string, scope: 'global' | 'project', entries: unknown) => {
+      if (!Array.isArray(entries)) return
+      await memory.replace(ws, scope, entries)
+      sendToRenderer('memory:updated', null)
+    }
+  )
+  ipcMain.handle(
+    'memory:add',
+    (_e, ws: string, text: string, type: MemoryType, scope?: 'global' | 'project') =>
+      memory.add(ws, text, type, 'user', scope ?? 'project')
+  )
+  ipcMain.handle('memory:addLegacy', (_e, ws: string, text: string, type: MemoryType) =>
     memory.add(ws, text, type, 'user')
   )
   ipcMain.handle('memory:forget', (_e, ws: string, id: string) => memory.forget(ws, id))
@@ -524,6 +587,57 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     }
   }
 
+  // 自动沉淀：较长的对话结束后，让模型提炼 0-3 条候选记忆进「待采纳」区（每会话一次；
+  // 不直接写正式记忆——保持"记忆写入须经人"的安全红线，用户在 Memory 面板一键采纳/忽略）
+  async function autoDistill(id: string): Promise<void> {
+    const conv = store.getConversation(id)
+    if (!conv || conv.distilled) return
+    const turns = conv.messages.filter((m) => m.role === 'user' || m.role === 'assistant').length
+    if (turns < 6) return
+    const settings = store.getSettings()
+    const modelId = conv.model || settings.defaultModel
+    if (!bareModel(modelId)) return
+    store.setConversationDistilled(id) // 先标记，失败也不重试（避免每轮都花一次调用）
+    try {
+      const provider = resolveProvider(modelId, settings)
+      const transcript = conv.messages
+        .filter((m) => (m.role === 'user' || m.role === 'assistant') && m.content)
+        .map((m) => `【${m.role === 'user' ? '用户' : '助手'}】${m.content.slice(0, 600)}`)
+        .join('\n')
+        .slice(0, 16_000)
+      const { content } = await provider.chat({
+        model: bareModel(modelId),
+        messages: [
+          {
+            id: 's',
+            role: 'system',
+            content:
+              '从对话中提炼对该项目/用户【长期有用】的信息：稳定事实、用户偏好、重要决策、踩过的坑。没有就不提。只输出 JSON 数组（最多 3 项），每项 {"text":"一句话","type":"fact|preference|decision|pitfall"}，不要输出其它文字。',
+            createdAt: 0
+          },
+          { id: 'u', role: 'user', content: transcript, createdAt: 0 }
+        ]
+      })
+      const m = content.match(/\[[\s\S]*\]/)
+      if (!m) return
+      const arr = JSON.parse(m[0]) as { text?: string; type?: string }[]
+      const TYPES = new Set(['fact', 'preference', 'decision', 'pitfall', 'todo'])
+      const items = arr
+        .filter((x) => typeof x.text === 'string' && x.text!.trim())
+        .slice(0, 3)
+        .map((x) => ({
+          text: x.text!.trim(),
+          type: (TYPES.has(x.type ?? '') ? x.type : 'fact') as MemoryType
+        }))
+      if (items.length) {
+        await memory.addPending(conv.workspaceDir, items, conv.title)
+        sendToRenderer('memory:updated', null)
+      }
+    } catch {
+      /* 沉淀失败无妨 */
+    }
+  }
+
   const runConversation = (
     conversationId: string,
     userContent?: string,
@@ -563,7 +677,9 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     box.task = task
     running.set(conversationId, task)
     // 运行结束后（若标题仍是默认值）让模型给会话起个短标题
-    void task.then(() => autoTitle(conversationId)).catch(() => {})
+    void task
+      .then(() => Promise.allSettled([autoTitle(conversationId), autoDistill(conversationId)]))
+      .catch(() => {})
     return task
   }
 

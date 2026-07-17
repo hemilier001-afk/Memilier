@@ -240,6 +240,14 @@ export const store = {
       writeJSON(convPath, conversations)
     }
   },
+  setConversationDistilled(id: string): void {
+    ensure()
+    const c = conversations[id]
+    if (c) {
+      c.distilled = true
+      writeJSON(convPath, conversations)
+    }
+  },
   setConversationPinned(id: string, pinned: boolean): void {
     ensure()
     const c = conversations[id]

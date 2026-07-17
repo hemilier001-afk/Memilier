@@ -374,6 +374,22 @@ const DICT: Dict = {
   memStale: { zh: '⚠较旧', en: '⚠ stale' },
   memAddPh: { zh: '新增一条记忆，回车保存', en: 'Add a memory, Enter to save' },
   memAdd: { zh: '添加', en: 'Add' },
+  memScopeProject: { zh: '本项目', en: 'Project' },
+  memScopeGlobal: { zh: '全局', en: 'Global' },
+  memPending: { zh: '待采纳（自动沉淀的候选）', en: 'Suggested (auto-distilled)' },
+  memAdopt: { zh: '采纳', en: 'Adopt' },
+  memIgnore: { zh: '忽略', en: 'Ignore' },
+  memConsolidate: { zh: '整理', en: 'Tidy up' },
+  memConsolidating: { zh: '整理中…', en: 'Tidying…' },
+  memConsolidateConfirm: {
+    zh: '整理结果：{a} 条 → {b} 条。应用（整批替换该层）？',
+    en: 'Result: {a} → {b} entries. Apply (replaces this scope)?'
+  },
+  memSavedToast: { zh: '✓ 已存入项目记忆', en: '✓ Saved to project memory' },
+  memHashHint: {
+    zh: '# 开头：回车直接存入项目记忆',
+    en: 'Starts with # — Enter saves to project memory'
+  },
   memFact: { zh: '事实', en: 'Fact' },
   memPreference: { zh: '偏好', en: 'Preference' },
   memDecision: { zh: '决策', en: 'Decision' },

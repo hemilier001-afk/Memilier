@@ -605,12 +605,13 @@ const updatePlan: Tool = {
 const addMemory: Tool = {
   name: 'add_memory',
   description:
-    '把对当前项目长期有用的一条信息记入项目记忆（跨对话生效）。只记"下次必然有用"的稳定信息，一次一条、简洁。type 标明类别/置信度：fact(事实) / preference(用户偏好) / decision(决策) / pitfall(坑) / todo(待办)。记前可参考已注入的现有记忆，避免重复。',
+    '把长期有用的一条信息记入记忆（跨对话生效）。scope=project(默认) 记入当前项目；scope=global 记入全局（跨所有项目，如用户身份/通用偏好）。只记"下次必然有用"的稳定信息，一次一条、简洁。type 标明类别：fact(事实) / preference(用户偏好) / decision(决策) / pitfall(坑) / todo(待办)。记前可参考已注入的现有记忆，避免重复。',
   // 写盘且内容会注入未来对话的系统提示，必须经用户确认（防提示注入持久化）
   sideEffect: 'write',
   schema: z.object({
     text: z.string(),
-    type: z.enum(['fact', 'preference', 'decision', 'pitfall', 'todo']).optional()
+    type: z.enum(['fact', 'preference', 'decision', 'pitfall', 'todo']).optional(),
+    scope: z.enum(['project', 'global']).optional()
   }),
   parameters: {
     type: 'object',
@@ -620,16 +621,21 @@ const addMemory: Tool = {
         type: 'string',
         enum: ['fact', 'preference', 'decision', 'pitfall', 'todo'],
         description: '类别/置信度'
+      },
+      scope: {
+        type: 'string',
+        enum: ['project', 'global'],
+        description: 'project=当前项目（默认）；global=跨所有项目（用户级偏好/事实）'
       }
     },
     required: ['text']
   },
-  async execute({ text, type }, ctx) {
+  async execute({ text, type, scope }, ctx) {
     const source = ctx.conversationId
       ? (store.getConversation(ctx.conversationId)?.title ?? undefined)
       : undefined
-    const e = await memory.add(ctx.workspace, text, type ?? 'fact', source)
-    return `已记入记忆（${e.type}，id:${e.id.slice(0, 8)}）`
+    const e = await memory.add(ctx.workspace, text, type ?? 'fact', source, scope ?? 'project')
+    return `已记入${scope === 'global' ? '全局' : '项目'}记忆（${e.type}，id:${e.id.slice(0, 8)}）`
   }
 }
 
@@ -688,7 +694,7 @@ const saveSkill: Tool = {
 const recall: Tool = {
   name: 'recall',
   description:
-    '在你过去所有对话里按关键词检索（跨 session 的历史召回）。当用户提到"之前/上次/我们讨论过"，或你需要过去的背景/决策时使用；返回最相关的历史片段。',
+    '按关键词检索记忆库（全局+项目，含未注入系统提示的早期条目）和过去所有对话（跨 session 历史召回）。当用户提到"之前/上次/我们讨论过"，或你需要过去的背景/决策/偏好时使用。',
   sideEffect: 'none',
   schema: z.object({ query: z.string() }),
   parameters: {
@@ -697,7 +703,10 @@ const recall: Tool = {
     required: ['query']
   },
   async execute({ query }, ctx) {
-    return store.searchHistory(query, ctx.conversationId)
+    // 记忆条目在前（密度高、可信度标注全），历史对话片段在后
+    const mem = await memory.search(ctx.workspace, query)
+    const history = store.searchHistory(query, ctx.conversationId)
+    return [mem, history].filter(Boolean).join('\n\n——— 历史对话 ———\n')
   }
 }
 

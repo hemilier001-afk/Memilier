@@ -22,24 +22,34 @@ function MemoryView(): JSX.Element {
   const t = useT() as unknown as (k: string) => string
   const active = useStore((s) => s.active)
   const ws = active?.workspaceDir
-  const [entries, setEntries] = useState<MemoryEntry[]>([])
+  const [data, setData] = useState<{
+    global: MemoryEntry[]
+    project: MemoryEntry[]
+    pending: MemoryEntry[]
+  }>({ global: [], project: [], pending: [] })
+  const [scope, setScope] = useState<'project' | 'global'>('project')
   const [text, setText] = useState('')
   const [type, setType] = useState<MemoryType>('fact')
+  const [busy, setBusy] = useState(false)
 
   const refresh = useCallback(async () => {
     if (!ws) return
-    setEntries(await window.api.listMemory(ws))
+    setData(await window.api.listMemory(ws))
   }, [ws])
 
   useEffect(() => {
     void refresh()
   }, [refresh])
+  // 自动沉淀/整理应用后实时刷新
+  useEffect(() => window.api.onMemoryUpdated(() => void refresh()), [refresh])
 
   if (!active) return <div className="p-4 text-sm text-muted">{t('openConvFirst')}</div>
 
+  const entries = scope === 'project' ? data.project : data.global
+
   const add = async (): Promise<void> => {
     if (!text.trim() || !ws) return
-    await window.api.addMemory(ws, text.trim(), type)
+    await window.api.addMemory(ws, text.trim(), type, scope)
     setText('')
     await refresh()
   }
@@ -48,11 +58,89 @@ function MemoryView(): JSX.Element {
     await window.api.forgetMemory(ws, id)
     await refresh()
   }
+  const resolvePending = async (id: string, adopt: boolean): Promise<void> => {
+    if (!ws) return
+    await window.api.resolvePendingMemory(ws, id, adopt)
+    await refresh()
+  }
+  const consolidate = async (): Promise<void> => {
+    if (!ws || busy) return
+    setBusy(true)
+    try {
+      const r = await window.api.consolidateMemory(ws, scope)
+      if (r.ok && r.proposed) {
+        const msg = t('memConsolidateConfirm')
+          .replace('{a}', String(r.before ?? '?'))
+          .replace('{b}', String(r.proposed.length))
+        if (window.confirm(msg)) {
+          await window.api.applyConsolidation(ws, scope, r.proposed)
+          await refresh()
+        }
+      } else if (r.error) {
+        window.alert(r.error)
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
 
   const now = Date.now()
   return (
     <div className="flex h-full flex-col">
       <div className="border-b border-line px-3 py-1.5 text-[11px] text-muted">{t('memHint')}</div>
+
+      {/* 待采纳区：自动沉淀的候选记忆，采纳后才进入正式记忆 */}
+      {data.pending.length > 0 && (
+        <div className="border-b border-line p-2">
+          <p className="mb-1 px-1 text-[11px] font-medium text-muted">{t('memPending')}</p>
+          {data.pending.map((e) => (
+            <div key={e.id} className="mb-1 rounded-lg border border-accent/40 px-2 py-1.5 text-xs">
+              <div className="whitespace-pre-wrap break-words text-fg">{e.text}</div>
+              <div className="mt-1 flex items-center gap-2 text-[11px]">
+                <span className="rounded bg-accent-soft px-1.5 text-accent">
+                  {t(MEM_LABEL[e.type] ?? e.type)}
+                </span>
+                {e.source && <span className="truncate text-muted">{e.source}</span>}
+                <button
+                  onClick={() => void resolvePending(e.id, true)}
+                  className="ml-auto rounded border border-line px-2 py-0.5 text-fg hover:bg-accent-soft"
+                >
+                  {t('memAdopt')}
+                </button>
+                <button
+                  onClick={() => void resolvePending(e.id, false)}
+                  className="rounded px-2 py-0.5 text-muted hover:text-fg"
+                >
+                  {t('memIgnore')}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* 层级切换 + 整理 */}
+      <div className="flex items-center gap-1 border-b border-line px-2 py-1.5">
+        {(['project', 'global'] as const).map((sc) => (
+          <button
+            key={sc}
+            onClick={() => setScope(sc)}
+            className={`rounded-md px-2 py-0.5 text-xs transition ${
+              scope === sc ? 'bg-accent-soft text-accent' : 'text-muted hover:text-fg'
+            }`}
+          >
+            {t(sc === 'project' ? 'memScopeProject' : 'memScopeGlobal')} (
+            {(sc === 'project' ? data.project : data.global).length})
+          </button>
+        ))}
+        <button
+          onClick={() => void consolidate()}
+          disabled={busy || entries.length < 2}
+          className="ml-auto rounded-md border border-line px-2 py-0.5 text-xs text-muted transition hover:bg-surface-2 hover:text-fg disabled:opacity-40"
+        >
+          {busy ? t('memConsolidating') : t('memConsolidate')}
+        </button>
+      </div>
 
       <div className="min-h-0 flex-1 overflow-auto p-2">
         {entries.length === 0 && (
@@ -109,7 +197,7 @@ function MemoryView(): JSX.Element {
         />
         <button
           onClick={() => void add()}
-          className="shrink-0 rounded-md border border-line bg-surface-2 text-fg hover:bg-accent-soft px-2 py-1 text-xs transition"
+          className="shrink-0 rounded-md border border-line bg-surface-2 px-2 py-1 text-xs text-fg hover:bg-accent-soft"
         >
           {t('memAdd')}
         </button>

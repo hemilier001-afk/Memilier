@@ -109,6 +109,8 @@ export interface Conversation {
   projectId?: string
   /** 置顶（侧栏排序优先） */
   pinned?: boolean
+  /** 本会话已做过自动记忆沉淀（每会话只做一次） */
+  distilled?: boolean
   /** 智能体维护的执行计划 */
   plan?: PlanStep[]
   messages: Message[]
@@ -319,9 +321,31 @@ export interface Api {
   gitUnstage(workspaceDir: string, path: string): Promise<void>
   gitCommit(workspaceDir: string, message: string): Promise<{ ok: boolean; message: string }>
   gitInit(workspaceDir: string): Promise<void>
-  listMemory(workspaceDir: string): Promise<MemoryEntry[]>
-  addMemory(workspaceDir: string, text: string, type: MemoryType): Promise<void>
+  listMemory(
+    workspaceDir: string
+  ): Promise<{ global: MemoryEntry[]; project: MemoryEntry[]; pending: MemoryEntry[] }>
+  addMemory(
+    workspaceDir: string,
+    text: string,
+    type: MemoryType,
+    scope?: 'global' | 'project'
+  ): Promise<void>
   forgetMemory(workspaceDir: string, id: string): Promise<void>
+  /** 采纳/忽略一条自动沉淀的候选记忆 */
+  resolvePendingMemory(workspaceDir: string, id: string, adopt: boolean): Promise<void>
+  /** 记忆整理：返回合并去重后的提案（不落盘） */
+  consolidateMemory(
+    workspaceDir: string,
+    scope: 'global' | 'project'
+  ): Promise<{ ok: boolean; before?: number; proposed?: MemoryEntry[]; error?: string }>
+  /** 应用整理提案（整批替换该层） */
+  applyConsolidation(
+    workspaceDir: string,
+    scope: 'global' | 'project',
+    entries: MemoryEntry[]
+  ): Promise<void>
+  /** 记忆库变化（自动沉淀/整理应用）时触发 */
+  onMemoryUpdated(cb: () => void): () => void
   readWorkspaceFile(workspaceDir: string, relPath: string): Promise<string>
   writeWorkspaceFile(workspaceDir: string, relPath: string, content: string): Promise<void>
   listSkills(): Promise<SkillInfo[]>
