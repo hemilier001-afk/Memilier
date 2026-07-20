@@ -95,9 +95,9 @@ export function SettingsModal(): JSX.Element | null {
 
   const [verifyMsg, setVerifyMsg] = useState<Record<string, string>>({})
   const verifyProvider = async (id: string): Promise<void> => {
-    setVerifyMsg((m) => ({ ...m, [id]: '验证中…' }))
+    setVerifyMsg((m) => ({ ...m, [id]: t('verifying') }))
     const r = await window.api.testProvider(id)
-    setVerifyMsg((m) => ({ ...m, [id]: r.ok ? `✓ ${r.note ?? '连接成功'}` : `✗ ${r.error}` }))
+    setVerifyMsg((m) => ({ ...m, [id]: r.ok ? `✓ ${r.note ?? t('verifyOk')}` : `✗ ${r.error}` }))
   }
 
   const testMcp = async (): Promise<void> => {
@@ -114,7 +114,7 @@ export function SettingsModal(): JSX.Element | null {
     setPluginMsg(null)
     const r = await window.api.installPlugin()
     if (r.ok) {
-      setPluginMsg(`✓ 已安装「${r.name}」`)
+      setPluginMsg(`✓ ${t('pluginInstalled').replace('{n}', r.name ?? '')}`)
       setPlugins(await window.api.listPlugins())
     } else if (r.error) {
       setPluginMsg(`✗ ${r.error}`)
@@ -127,7 +127,7 @@ export function SettingsModal(): JSX.Element | null {
   const installCatalog = async (id: string): Promise<void> => {
     setPluginMsg(null)
     const r = await window.api.installCatalogPlugin(id)
-    if (r.ok) setPluginMsg(`✓ 已安装「${r.name}」`)
+    if (r.ok) setPluginMsg(`✓ ${t('pluginInstalled').replace('{n}', r.name ?? '')}`)
     else if (r.error) setPluginMsg(`✗ ${r.error}`)
     await refreshPluginLists()
   }
@@ -536,9 +536,7 @@ export function SettingsModal(): JSX.Element | null {
                       {pluginMsg}
                     </p>
                   )}
-                  <p className="mt-1 text-xs text-muted">
-                    安装后模型即可处理对应文件类型（部分需本机有 Python 环境）。
-                  </p>
+                  <p className="mt-1 text-xs text-muted">{t('skillsInstalledHint')}</p>
                 </div>
                 <div>
                   <label className="mb-1 block font-medium">{t('skillsTitle')}</label>
@@ -612,22 +610,24 @@ export function SettingsModal(): JSX.Element | null {
 
             {cat === 'shortcuts' && (
               <ul className="space-y-1.5">
-                {[
-                  ['新建对话 / New chat', '⌘/Ctrl + N'],
-                  ['导出对话 / Export', '⌘/Ctrl + ⇧ + E'],
-                  ['设置 / Settings', '⌘/Ctrl + ,'],
-                  ['显示/隐藏侧栏 / Toggle sidebar', '⌘/Ctrl + \\'],
-                  ['切到 Chat / Cowork / Code', '⌘/Ctrl + 1 / 2 / 3'],
-                  ['停止生成 / Stop', 'Esc'],
-                  ['发送 / Send', settings.submitKey === 'mod-enter' ? '⌘/Ctrl + Enter' : 'Enter'],
-                  ['换行 / Newline', settings.submitKey === 'mod-enter' ? 'Enter' : '⇧ + Enter'],
-                  ['@ 引用文件 / Reference file', '@']
-                ].map(([label, keys]) => (
+                {(
+                  [
+                    ['scNew', '⌘/Ctrl + N'],
+                    ['scExport', '⌘/Ctrl + ⇧ + E'],
+                    ['scSettings', '⌘/Ctrl + ,'],
+                    ['scSidebar', '⌘/Ctrl + \\'],
+                    ['scSpaces', '⌘/Ctrl + 1 / 2 / 3'],
+                    ['scStop', 'Esc'],
+                    ['scSend', settings.submitKey === 'mod-enter' ? '⌘/Ctrl + Enter' : 'Enter'],
+                    ['scNewline', settings.submitKey === 'mod-enter' ? 'Enter' : '⇧ + Enter'],
+                    ['scAtFile', '@']
+                  ] as const
+                ).map(([label, keys]) => (
                   <li
                     key={label}
                     className="flex items-center justify-between rounded-md bg-surface-2 px-2.5 py-1.5"
                   >
-                    <span>{label}</span>
+                    <span>{(t as unknown as (k: string) => string)(label)}</span>
                     <kbd className="rounded border border-line bg-surface px-1.5 py-0.5 font-mono text-xs">
                       {keys}
                     </kbd>

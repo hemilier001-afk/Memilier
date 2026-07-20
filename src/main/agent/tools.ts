@@ -44,6 +44,66 @@ function truncate(s: string, max: number): string {
   return s.length > max ? `${s.slice(0, max)}\n…（已截断，共 ${s.length} 字符）` : s
 }
 
+// 网页 → Markdown（借鉴 Claude 的浏览体验）：优先取正文容器、剥掉导航/页脚等样板，
+// 保留标题层级/列表/链接结构——比"全文压成一行"的纯文本对模型可读得多。
+function htmlToMarkdown(html: string, baseUrl: string): { title: string; body: string } {
+  const title = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html)?.[1]?.trim() ?? ''
+  // 优先正文容器：article > main > role=main；都没有则用 body 并剥样板区块
+  let content =
+    /<article[^>]*>([\s\S]*?)<\/article>/i.exec(html)?.[1] ??
+    /<main[^>]*>([\s\S]*?)<\/main>/i.exec(html)?.[1] ??
+    /<[^>]+role="main"[^>]*>([\s\S]*?)<\/(?:div|section)>/i.exec(html)?.[1] ??
+    html
+  content = content
+    .replace(/<(script|style|noscript|svg|iframe|form|canvas)[\s\S]*?<\/\1>/gi, '')
+    .replace(/<(header|footer|nav|aside)[\s\S]*?<\/\1>/gi, '')
+    .replace(/<!--[\s\S]*?-->/g, '')
+  // 结构 → Markdown
+  content = content
+    .replace(/<h([1-6])[^>]*>([\s\S]*?)<\/h\1>/gi, (_m, n, t2) => {
+      const inner = String(t2)
+        .replace(/<[^>]+>/g, '')
+        .trim()
+      return inner ? `\n\n${'#'.repeat(Number(n))} ${inner}\n\n` : ''
+    })
+    .replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, (_m, t2) => {
+      const inner = String(t2)
+        .replace(/<[^>]+>/g, '')
+        .trim()
+      return inner ? `\n- ${inner}` : ''
+    })
+    .replace(/<a[^>]*href="([^"#][^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, (_m, href, t2) => {
+      const inner = String(t2)
+        .replace(/<[^>]+>/g, '')
+        .trim()
+      if (!inner) return ''
+      let abs = String(href)
+      try {
+        abs = new URL(abs, baseUrl).toString()
+      } catch {
+        /* 保持原样 */
+      }
+      // javascript: 等非 http 链接只留文字
+      return /^https?:/i.test(abs) ? `[${inner}](${abs})` : inner
+    })
+    .replace(/<(?:p|div|section|tr|blockquote)[^>]*>/gi, '\n')
+    .replace(/<br\s*\/?\s*>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+  // 实体解码 + 空白收敛
+  content = content
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#0?39;|&apos;/g, "'")
+    .replace(/[ \t]+/g, ' ')
+    .replace(/ ?\n ?/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+  return { title, body: content }
+}
+
 const readFile: Tool = {
   name: 'read_file',
   description: '读取工作区内某个文件的文本内容。修改文件前应先读取。',
@@ -362,16 +422,12 @@ const fetchUrl: Tool = {
     } else {
       raw = await res.text()
     }
-    const text = /html/i.test(ct)
-      ? raw
-          .replace(/<script[\s\S]*?<\/script>/gi, '')
-          .replace(/<style[\s\S]*?<\/style>/gi, '')
-          .replace(/<[^>]+>/g, ' ')
-          .replace(/&nbsp;/g, ' ')
-          .replace(/\s+/g, ' ')
-          .trim()
-      : raw
-    return truncate(text || '(无内容)', MAX_OUTPUT_CHARS)
+    if (/html/i.test(ct)) {
+      const { title, body } = htmlToMarkdown(raw, url)
+      const head = title ? `标题：${title}\nURL：${url}\n\n` : `URL：${url}\n\n`
+      return truncate(head + (body || '(无正文内容)'), MAX_OUTPUT_CHARS)
+    }
+    return truncate(raw || '(无内容)', MAX_OUTPUT_CHARS)
   }
 }
 

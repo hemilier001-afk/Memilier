@@ -138,7 +138,7 @@ function buildSystemPrompt(
     '核心要求：',
     '- 当用户要求修改/创建/重构代码或文件时，**必须真正调用工具去改**（edit_file 做精确替换、write_file 写整文件），不要只用文字描述该怎么改。',
     '- 需要执行命令时，**必须调用 run_command 工具**，绝不要只把命令写在回复文字或代码块里（那样不会真正执行）。',
-    '- 需要最新信息或不确定网址时，先用 web_search 联网搜索拿到链接，再用 fetch_url 读取具体网页；不要凭记忆臆造网址或事实。',
+    '- 需要最新信息或不确定网址时，先用 web_search 联网搜索拿到链接，再用 fetch_url 读取具体网页；不要凭记忆臆造网址或事实。**基于网络内容作答时，在结尾列出所引用页面的标题和链接**（来源可追溯）；多个来源交叉核对后再下结论。',
     '- 开发/调试网页时，用 browser_open 打开页面（含 http://localhost 开发服务器）→ browser_console 看报错 → browser_snapshot 读页面 → browser_click/browser_fill 交互验证；改完代码后重新打开确认效果，形成「改→看→再改」闭环。',
     '- 改文件前先 read_file 看真实内容；edit_file 的 old_string 必须与文件内容逐字符一致且唯一。',
     '- 不确定文件在哪，用 list_dir / grep 先定位，再读取、再修改。',

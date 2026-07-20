@@ -114,6 +114,26 @@ const DICT: Dict = {
   installed: { zh: '已安装', en: 'Installed' },
   uninstall: { zh: '卸载', en: 'Uninstall' },
 
+  // 快捷键页
+  scNew: { zh: '新建对话', en: 'New chat' },
+  scExport: { zh: '导出对话', en: 'Export chat' },
+  scSettings: { zh: '设置', en: 'Settings' },
+  scSidebar: { zh: '显示/隐藏侧栏', en: 'Toggle sidebar' },
+  scSpaces: { zh: '切到 Chat / Cowork / Code', en: 'Switch to Chat / Cowork / Code' },
+  scStop: { zh: '停止生成', en: 'Stop generating' },
+  scSend: { zh: '发送', en: 'Send' },
+  scNewline: { zh: '换行', en: 'Newline' },
+  scAtFile: { zh: '@ 引用文件', en: '@ reference file' },
+
+  // Skills / Plugins 页补充
+  skillsInstalledHint: {
+    zh: '安装后模型即可处理对应文件类型（部分需本机有 Python 环境）。',
+    en: 'Once installed the model can handle these file types (some require local Python).'
+  },
+  verifying: { zh: '验证中…', en: 'Verifying…' },
+  verifyOk: { zh: '连接成功', en: 'Connected' },
+  pluginInstalled: { zh: '已安装「{n}」', en: 'Installed “{n}”' },
+
   // 关于
   aboutDesc: {
     zh: '桌面智能体：对话 + 工具调用 + 文件/命令操作，由本地 Ollama 或云端模型驱动。',
