@@ -22,6 +22,10 @@ export interface ToolContext {
   recordDiff?: (path: string, before: string, after: string) => void
   /** 更新执行计划（供 Plan 面板展示） */
   setPlan?: (steps: PlanStep[]) => void
+  /** 派生一个子 agent 完成一个专注子任务，返回其最终报告（多 agent 编排；由 loop.ts 注入） */
+  spawnAgent?: (opts: { agent?: string; task: string }) => Promise<string>
+  /** 可派生的子 agent 类型（供 spawn_agent 描述/报错提示；由 loop.ts 注入） */
+  agentTypes?: { name: string; description: string }[]
 }
 
 export interface Tool {
@@ -766,6 +770,33 @@ const recall: Tool = {
   }
 }
 
+// 多 agent 编排：派生一个专注的子 agent 完成子任务。子 agent 有独立上下文、自己的工具白名单
+// 与（可选）模型，做完把最终报告返回。编排本身无副作用（子 agent 的写/执行工具仍各自经授权）。
+const spawnAgentTool: Tool = {
+  name: 'spawn_agent',
+  description:
+    '派生一个专注的子 agent 去完成【一个明确的子任务】，它有独立的上下文窗口，完成后返回最终报告。' +
+    '适合：把大任务拆成可独立完成的子任务、或需要在大量文件里并行调研（可在同一轮里派生多个 spawn_agent 并行执行，各自返回后你再汇总）。' +
+    'agent 填子 agent 类型名（不填=通用）；task 写清楚要它做什么、期望产出什么。简单任务请自己做，不要滥用派生。',
+  sideEffect: 'none', // 编排无副作用；子 agent 内部的写/执行工具仍各自弹授权
+  schema: z.object({ task: z.string(), agent: z.string().optional() }),
+  parameters: {
+    type: 'object',
+    properties: {
+      task: { type: 'string', description: '交给子 agent 的完整子任务描述（含目标与期望产出）' },
+      agent: {
+        type: 'string',
+        description: '子 agent 类型名（可选；见系统提示里的列表，不填=通用）'
+      }
+    },
+    required: ['task']
+  },
+  async execute({ task, agent }, ctx) {
+    if (!ctx.spawnAgent) return '当前环境不支持派生子 agent。'
+    return ctx.spawnAgent({ agent, task })
+  }
+}
+
 const ALL: Tool[] = [
   readFile,
   writeFile,
@@ -787,7 +818,8 @@ const ALL: Tool[] = [
   addMemory,
   forgetMemory,
   recall,
-  saveSkill
+  saveSkill,
+  spawnAgentTool
 ]
 const REGISTRY = new Map(ALL.map((t) => [t.name, t]))
 
@@ -844,6 +876,15 @@ export function listToolDefs(readOnlyOnly = false): ToolDef[] {
   }))
 }
 
+// 子 agent 可用工具：按白名单过滤（allowed 为空=全部）；一律排除 spawn_agent（禁止递归派生）
+// 与 update_plan（子 agent 不拥有主对话的计划）。
+export function listToolDefsFor(allowed?: string[]): ToolDef[] {
+  const EXCLUDE = new Set(['spawn_agent', 'update_plan'])
+  return ALL.filter((t) => !EXCLUDE.has(t.name))
+    .filter((t) => !allowed || allowed.includes(t.name))
+    .map((t) => ({ name: t.name, description: t.description, parameters: t.parameters }))
+}
+
 export { isDangerousCommand }
 
 export function describeTool(tool: Tool, args: Record<string, unknown>): string {
@@ -853,6 +894,8 @@ export function describeTool(tool: Tool, args: Record<string, unknown>): string 
   }
   if (tool.name === 'web_search') return `联网搜索：${String(args.query)}`
   if (tool.name === 'fetch_url') return `读取网页：${String(args.url)}`
+  if (tool.name === 'spawn_agent')
+    return `派生子 agent「${String(args.agent || '通用')}」：${String(args.task ?? '')}`
   if (tool.name === 'browser_open') return `浏览器打开：${String(args.url)}`
   if (tool.name === 'browser_click') return `浏览器点击：${String(args.selector)}`
   if (tool.name === 'browser_fill') return `浏览器填入：${String(args.selector)}`

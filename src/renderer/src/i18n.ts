@@ -125,6 +125,13 @@ const DICT: Dict = {
   scNewline: { zh: '换行', en: 'Newline' },
   scAtFile: { zh: '@ 引用文件', en: '@ reference file' },
 
+  // 子 agent（多 agent）
+  agentsTitle: { zh: '子 agent（多 agent 编排）', en: 'Subagents (multi-agent)' },
+  agentsHint: {
+    zh: '主 agent 可用 spawn_agent 工具派生这些子 agent 去做专注子任务（可并行）。在 .hemilier/agents/ 放 .md 文件（frontmatter: name/description/tools/model + 正文=系统提示）可新增或覆盖。',
+    en: 'The main agent can spawn these to run focused subtasks (in parallel) via the spawn_agent tool. Add or override them with .md files in .hemilier/agents/ (frontmatter: name/description/tools/model + body = system prompt).'
+  },
+
   // Skills / Plugins 页补充
   skillsInstalledHint: {
     zh: '安装后模型即可处理对应文件类型（部分需本机有 Python 环境）。',

@@ -1,17 +1,26 @@
 import { randomUUID } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import type { AgentEvent, Message, ToolCall } from '@shared/types'
+import type { AgentEvent, Message, Settings, ToolCall } from '@shared/types'
 import type { ModelProvider } from '../providers/types'
 import { imageStore } from '../images'
 import { mcpManager } from '../mcp/manager'
 import { memory as memoryStore } from '../memory'
 import { pluginManager } from '../plugins/manager'
-import { bareModel } from '../providers/registry'
+import { bareModel, resolveProvider } from '../providers/registry'
 import { skillManager, type SkillMeta } from '../skills/manager'
 import { store } from '../store'
 import type { PermissionManager } from './permission'
-import { describeTool, getTool, isDangerousCommand, listToolDefs, toolNames } from './tools'
+import {
+  describeTool,
+  getTool,
+  isDangerousCommand,
+  listToolDefs,
+  listToolDefsFor,
+  toolNames,
+  type ToolContext
+} from './tools'
+import { agentManager } from './agents/manager'
 
 const MAX_ITERATIONS = 25
 // 发送给模型的历史预算（按字符粗估，约对应 1.6 万 token）；超出则丢弃较早消息
@@ -191,6 +200,181 @@ function zhZodIssue(issue: {
   return issue.message
 }
 
+// 共享的单个工具执行（不发 UI 事件；供子 agent 循环复用）。会 mutate tc.status/result/error。
+async function executeToolCall(
+  tc: ToolCall,
+  ctx: ToolContext,
+  o: { permission: PermissionManager; signal: AbortSignal; settings: Settings; allowMcp: boolean }
+): Promise<string> {
+  if (typeof tc.args === 'string') {
+    try {
+      tc.args = JSON.parse(tc.args)
+    } catch {
+      tc.args = {}
+    }
+  }
+  const isMcp = o.allowMcp && mcpManager.isMcpTool(tc.name)
+  const tool = isMcp ? undefined : getTool(tc.name)
+  if (!tool && !isMcp) {
+    tc.status = 'error'
+    tc.error = `未知工具 "${tc.name}"。可用工具：${toolNames().join('、')}。`
+    return tc.error
+  }
+  if (tool && tc.name !== tool.name) tc.name = tool.name
+  let parsedArgs: unknown = tc.args
+  if (tool) {
+    const res = tool.schema.safeParse(tc.args)
+    if (!res.success) {
+      const detail = res.error.issues
+        .map((i) => `${i.path.join('.') || '参数'}：${zhZodIssue(i)}`)
+        .join('；')
+      tc.status = 'error'
+      tc.error = `参数不合法（${detail}）。请修正后重试。`
+      return tc.error
+    }
+    parsedArgs = res.data
+  }
+  const sideEffect = isMcp ? 'exec' : tool!.sideEffect
+  const dialogArgs = (parsedArgs ?? tc.args) as Record<string, unknown>
+  const description = isMcp ? `MCP 工具：${tc.name}` : describeTool(tool!, dialogArgs)
+  const forcePrompt =
+    !isMcp &&
+    tool!.name === 'run_command' &&
+    isDangerousCommand(String((dialogArgs as { command?: string })?.command ?? ''))
+  const approved = await o.permission.request(tc, sideEffect, description, forcePrompt, o.signal)
+  if (!approved) {
+    tc.status = 'denied'
+    tc.error = '用户拒绝执行'
+    return '用户拒绝了该操作。'
+  }
+  tc.status = 'running'
+  try {
+    const r = isMcp
+      ? await mcpManager.callTool(tc.name, tc.args)
+      : await tool!.execute(parsedArgs, ctx)
+    tc.status = 'done'
+    tc.result = r
+    return r
+  } catch (e) {
+    tc.status = 'error'
+    tc.error = e instanceof Error ? e.message : String(e)
+    return `错误：${tc.error}`
+  }
+}
+
+const SUB_MAX_ITERATIONS = 14
+const MAX_SUBAGENT_REPORT = 12_000
+
+/** 派生一个子 agent 跑一个专注子任务，返回最终报告（多 agent 编排的核心原语）。
+ *  子 agent：独立上下文、按定义过滤的工具白名单、可覆盖模型；不能再派生（禁递归）；
+ *  写/执行工具仍经同一个权限网关（安全不降级）。*/
+export async function runSubAgent(opts: {
+  agentName?: string
+  task: string
+  workspace: string
+  parentModelId: string
+  permission: PermissionManager
+  signal: AbortSignal
+  skillDirs: string[]
+  conversationId?: string
+  depth: number
+}): Promise<string> {
+  const { workspace, task, permission, signal, skillDirs, conversationId } = opts
+  if (opts.depth >= 1) return '（子 agent 不能再派生子 agent，请由主 agent 统筹。）'
+  if (!task.trim()) return '（未提供子任务描述。）'
+
+  const def = opts.agentName ? await agentManager.get(workspace, opts.agentName) : undefined
+  if (opts.agentName && !def) {
+    const names = (await agentManager.list(workspace)).map((a) => a.name).join('、')
+    return `未找到子 agent 类型 "${opts.agentName}"。可用类型：${names}。请改用其一或不指定 agent。`
+  }
+
+  const settings = store.getSettings()
+  const parentPrefix = opts.parentModelId.includes('::')
+    ? opts.parentModelId.split('::')[0]
+    : 'ollama'
+  const modelId = def?.model
+    ? def.model.includes('::')
+      ? def.model
+      : `${parentPrefix}::${def.model}`
+    : opts.parentModelId
+  const provider = resolveProvider(modelId, settings)
+  const model = bareModel(modelId)
+  if (!model) return '（尚未选择模型，无法派生子 agent。）'
+
+  const toolDefs = listToolDefsFor(def?.tools)
+  const osName =
+    process.platform === 'win32' ? 'Windows' : process.platform === 'darwin' ? 'macOS' : 'Linux'
+  const shellHint =
+    process.platform === 'win32'
+      ? 'run_command 在 Windows cmd 下执行，用 Windows 命令（dir/type/copy），别用 ls/cat。'
+      : 'run_command 在类 Unix shell 下执行。'
+  const wsListing = await listWorkspaceTop(workspace)
+  const sys: Message = {
+    id: 'sys',
+    role: 'system',
+    content: [
+      def?.prompt || '你是一个专注的子 agent，被主 agent 派来完成一个明确的子任务。',
+      '',
+      `运行平台：${osName}。当前工作区：${workspace}`,
+      wsListing ? `工作区顶层：${wsListing}` : '',
+      '',
+      '要求：',
+      '- 你只负责【这一个子任务】，完成后用简洁的**最终报告**回复（做了什么、关键结论/文件、验证结果），不要反问、不要客套。',
+      '- 改文件用 edit_file/write_file、执行命令用 run_command（会请求用户授权）；只读调研用 read_file/list_dir/glob/grep。',
+      '- 所有操作限定在工作区内。',
+      `- ${shellHint}`,
+      '- 用 Markdown 回复。'
+    ].join('\n'),
+    createdAt: 0
+  }
+
+  const messages: Message[] = [
+    { id: randomUUID(), role: 'user', content: task, createdAt: Date.now() }
+  ]
+  const ctx: ToolContext = { workspace, conversationId, skillDirs }
+  const trace: string[] = []
+  let lastContent = ''
+
+  for (let i = 0; i < SUB_MAX_ITERATIONS; i++) {
+    if (signal.aborted) break
+    const { content, toolCalls } = await provider.chat({
+      model,
+      messages: [sys, ...sanitizeToolPairing(trimHistory(messages))],
+      tools: toolDefs,
+      signal
+    })
+    lastContent = content
+    messages.push({
+      id: randomUUID(),
+      role: 'assistant',
+      content,
+      toolCalls: toolCalls.length ? toolCalls : undefined,
+      createdAt: Date.now()
+    })
+    if (!toolCalls.length) break
+    for (const tc of toolCalls) {
+      if (signal.aborted) break
+      const r = await executeToolCall(tc, ctx, { permission, signal, settings, allowMcp: false })
+      trace.push(tc.status === 'error' || tc.status === 'denied' ? `${tc.name}✗` : tc.name)
+      messages.push({
+        id: randomUUID(),
+        role: 'tool',
+        content: r,
+        toolCallId: tc.id,
+        createdAt: Date.now()
+      })
+    }
+  }
+
+  const label = def ? `子 agent「${def.name}」` : '子 agent'
+  const body = (lastContent.trim() || '（未产出文本报告）').slice(0, MAX_SUBAGENT_REPORT)
+  const steps = trace.length
+    ? `\n\n———（${label} 用了 ${trace.length} 步：${trace.join(' → ')}）`
+    : ''
+  return `${body}${steps}`
+}
+
 interface RunOptions {
   conversationId: string
   /** 用户输入；省略（undefined）表示「重新生成」（沿用已有的最后一条 user 消息） */
@@ -258,18 +442,26 @@ export async function runAgent(opts: RunOptions): Promise<void> {
     chat: '\n\n【对话模式】仅进行对话，不调用任何工具。'
   }
 
-  const [skills, wsListing, memory, projectInstructions] = await Promise.all([
+  const [skills, wsListing, memory, projectInstructions, agentDefs] = await Promise.all([
     skillManager.listSkills(workspace, pluginSkillDirs),
     listWorkspaceTop(workspace),
     memoryStore.renderForPrompt(workspace),
-    loadProjectInstructions(workspace)
+    loadProjectInstructions(workspace),
+    agentManager.list(workspace)
   ])
+  // 可派生的子 agent 清单（仅 auto 模式注入；plan/chat 不派生）
+  const agentsSection =
+    mode === 'auto' && agentDefs.length
+      ? '\n\n可派生的子 agent（用 spawn_agent 工具：agent 填类型名、task 写明确子任务；可在同一轮里派生多个并行执行，各自返回报告后你汇总）。何时用：任务能拆成独立子任务，或需在大量文件里并行调研；简单任务自己做。可用类型：\n' +
+        agentDefs.map((a) => `- ${a.name}：${a.description}`).join('\n')
+      : ''
   const custom = settings.customInstructions?.[conv.kind]?.trim()
   const system: Message = {
     id: 'system',
     role: 'system',
     content:
       buildSystemPrompt(workspace, skills, wsListing, memory, projectInstructions) +
+      agentsSection +
       (custom ? `\n\n用户为当前空间设定的自定义指令（请遵循）：\n${custom}` : '') +
       MODE_HINT[mode],
     createdAt: 0
@@ -295,7 +487,20 @@ export async function runAgent(opts: RunOptions): Promise<void> {
       conv.plan = steps
       store.saveConversation(conv)
       send({ type: 'plan', plan: steps })
-    }
+    },
+    spawnAgent: ({ agent, task }: { agent?: string; task: string }) =>
+      runSubAgent({
+        agentName: agent,
+        task,
+        workspace,
+        parentModelId: modelId,
+        permission,
+        signal,
+        skillDirs: pluginSkillDirs,
+        conversationId,
+        depth: 0
+      }),
+    agentTypes: agentDefs.map((a) => ({ name: a.name, description: a.description }))
   }
   // 按模式决定可用工具：auto 全开 + MCP；plan 仅只读工具；chat 不给工具
   let toolDefs: import('@shared/types').ToolDef[] = []
@@ -303,7 +508,7 @@ export async function runAgent(opts: RunOptions): Promise<void> {
     const mcpDefs = await mcpManager.listToolDefs({ ...pluginMcpServers, ...settings.mcpServers })
     toolDefs = [...listToolDefs(), ...mcpDefs]
   } else if (mode === 'plan') {
-    toolDefs = listToolDefs(true)
+    toolDefs = listToolDefs(true).filter((t) => t.name !== 'spawn_agent')
   }
 
   let partial = '' // 本轮已流式输出的文本；中止时保留成消息而非丢弃

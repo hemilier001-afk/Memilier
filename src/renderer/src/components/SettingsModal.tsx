@@ -1,5 +1,11 @@
 import { useEffect, useState } from 'react'
-import type { PluginCatalogItem, PluginInfo, ProviderConfig, SkillInfo } from '@shared/types'
+import type {
+  AgentInfo,
+  PluginCatalogItem,
+  PluginInfo,
+  ProviderConfig,
+  SkillInfo
+} from '@shared/types'
 import { useStore } from '../store'
 import { useT } from '../i18n'
 
@@ -39,6 +45,7 @@ export function SettingsModal(): JSX.Element | null {
   const [mcpText, setMcpText] = useState('')
   const [mcpError, setMcpError] = useState<string | null>(null)
   const [skills, setSkills] = useState<SkillInfo[]>([])
+  const [agents, setAgents] = useState<AgentInfo[]>([])
   const [plugins, setPlugins] = useState<PluginInfo[]>([])
   const [providers, setProviders] = useState<ProviderConfig[]>([])
   const [mcpStatus, setMcpStatus] = useState<
@@ -55,6 +62,7 @@ export function SettingsModal(): JSX.Element | null {
       setProviders(s?.providers ?? [])
       setMcpError(null)
       void window.api.listSkills().then(setSkills)
+      void window.api.listAgents(useStore.getState().settings?.workspaceDir ?? '').then(setAgents)
       void window.api.listPlugins().then(setPlugins)
       void window.api.pluginCatalog().then(setCatalog)
     }
@@ -537,6 +545,19 @@ export function SettingsModal(): JSX.Element | null {
                     </p>
                   )}
                   <p className="mt-1 text-xs text-muted">{t('skillsInstalledHint')}</p>
+                </div>
+                <div>
+                  <label className="mb-1 block font-medium">{t('agentsTitle')}</label>
+                  <ul className="space-y-1">
+                    {agents.map((a) => (
+                      <li key={a.name} className="rounded-md bg-surface-2 px-2 py-1">
+                        <span className="font-mono text-accent">{a.name}</span>
+                        <span className="ml-1 text-xs text-muted">[{a.source}]</span>
+                        {a.description && <p className="text-xs text-muted">{a.description}</p>}
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="mt-1 text-xs text-muted">{t('agentsHint')}</p>
                 </div>
                 <div>
                   <label className="mb-1 block font-medium">{t('skillsTitle')}</label>

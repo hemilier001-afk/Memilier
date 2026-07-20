@@ -57,6 +57,7 @@ import { imageStore } from './images'
 import { mcpManager } from './mcp/manager'
 import { pluginManager } from './plugins/manager'
 import { skillManager } from './skills/manager'
+import { agentManager } from './agent/agents/manager'
 import { memory } from './memory'
 import { randomUUID } from 'node:crypto'
 import { bareModel, listAllModels, resolveProvider } from './providers/registry'
@@ -387,6 +388,13 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     return data.text ?? ''
   })
 
+  ipcMain.handle('agents:list', async (_e, ws: string) =>
+    (await agentManager.list(ws)).map((a) => ({
+      name: a.name,
+      description: a.description,
+      source: a.source
+    }))
+  )
   ipcMain.handle('skills:list', async () => {
     const ws = store.getSettings().workspaceDir
     const pluginDirs = pluginManager.activePlugins().flatMap((p) => p.skillDirs)

@@ -203,6 +203,13 @@ export interface GitStatus {
   files: GitFile[]
 }
 
+/** 提供给设置界面展示的子 agent（多 agent 编排）信息 */
+export interface AgentInfo {
+  name: string
+  description: string
+  source: 'builtin' | 'workspace' | 'global'
+}
+
 /** 提供给设置界面展示的技能信息 */
 export interface SkillInfo {
   name: string
@@ -349,6 +356,8 @@ export interface Api {
   readWorkspaceFile(workspaceDir: string, relPath: string): Promise<string>
   writeWorkspaceFile(workspaceDir: string, relPath: string, content: string): Promise<void>
   listSkills(): Promise<SkillInfo[]>
+  /** 列出可派生的子 agent 类型（内置 + 工作区 + 全局） */
+  listAgents(workspaceDir: string): Promise<AgentInfo[]>
   listPlugins(): Promise<PluginInfo[]>
   setPluginEnabled(name: string, enabled: boolean): Promise<void>
   openPluginsDir(): Promise<void>

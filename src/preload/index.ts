@@ -62,6 +62,7 @@ const api: Api = {
   writeWorkspaceFile: (workspaceDir, relPath, content) =>
     ipcRenderer.invoke('workspace:writeFile', workspaceDir, relPath, content),
   listSkills: () => ipcRenderer.invoke('skills:list'),
+  listAgents: (ws) => ipcRenderer.invoke('agents:list', ws),
   listPlugins: () => ipcRenderer.invoke('plugins:list'),
   setPluginEnabled: (name, enabled) => ipcRenderer.invoke('plugins:setEnabled', name, enabled),
   openPluginsDir: () => ipcRenderer.invoke('plugins:openDir'),
