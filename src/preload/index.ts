@@ -63,6 +63,7 @@ const api: Api = {
     ipcRenderer.invoke('workspace:writeFile', workspaceDir, relPath, content),
   listSkills: () => ipcRenderer.invoke('skills:list'),
   listAgents: (ws) => ipcRenderer.invoke('agents:list', ws),
+  listCommands: (ws) => ipcRenderer.invoke('commands:list', ws),
   searchConversations: (q) => ipcRenderer.invoke('conversations:search', q),
   exportData: () => ipcRenderer.invoke('data:export'),
   importData: () => ipcRenderer.invoke('data:import'),

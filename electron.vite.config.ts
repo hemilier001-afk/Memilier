@@ -27,7 +27,25 @@ export default defineConfig({
     },
     plugins: [react()],
     build: {
-      rollupOptions: { input: { index: resolve(__dirname, 'src/renderer/index.html') } }
+      chunkSizeWarningLimit: 900,
+      rollupOptions: {
+        input: { index: resolve(__dirname, 'src/renderer/index.html') },
+        output: {
+          // 把大体积的第三方库拆到独立 chunk，减小主 bundle、利于缓存复用
+          manualChunks: {
+            react: ['react', 'react-dom'],
+            markdown: [
+              'react-markdown',
+              'remark-gfm',
+              'remark-math',
+              'rehype-highlight',
+              'rehype-katex'
+            ],
+            katex: ['katex'],
+            highlight: ['highlight.js']
+          }
+        }
+      }
     }
   }
 })

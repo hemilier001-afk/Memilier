@@ -628,7 +628,24 @@ function Composer(): JSX.Element {
 
   // 斜杠命令（输入框以 / 开头且未含空格时弹出）
   const slashQuery = /^\/(\S*)$/.exec(text)?.[1] ?? null
+  // 工作区自定义命令（.hemilier/commands/*.md）：选中即把正文作为消息发送
+  const [customCmds, setCustomCmds] = useState<
+    { name: string; description: string; body: string }[]
+  >([])
+  useEffect(() => {
+    if (active?.workspaceDir)
+      window.api
+        .listCommands(active.workspaceDir)
+        .then(setCustomCmds)
+        .catch(() => setCustomCmds([]))
+  }, [active?.workspaceDir])
   const SLASH_COMMANDS: { id: string; label: string; desc: string; run: () => void }[] = [
+    ...customCmds.map((c) => ({
+      id: c.name.toLowerCase(),
+      label: `/${c.name}`,
+      desc: c.description || '自定义命令',
+      run: () => send(c.body)
+    })),
     {
       id: 'new',
       label: '/new',

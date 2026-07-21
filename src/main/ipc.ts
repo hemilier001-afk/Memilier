@@ -1,6 +1,6 @@
 import { type ChildProcess, execFile, spawn } from 'node:child_process'
 import { existsSync, statSync, promises as fsp } from 'node:fs'
-import { basename, dirname } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { app, BrowserWindow, clipboard, dialog, ipcMain, session, shell } from 'electron'
 import type {
   AgentEvent,
@@ -427,6 +427,27 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     return data.text ?? ''
   })
 
+  ipcMain.handle('commands:list', async (_e, ws: string) => {
+    const dir = join(ws, '.hemilier', 'commands')
+    const { parseFrontmatter, stripFrontmatter } = await import('./skills/frontmatter')
+    try {
+      const entries = await fsp.readdir(dir)
+      const out: { name: string; description: string; body: string }[] = []
+      for (const f of entries) {
+        if (!f.endsWith('.md')) continue
+        const raw = await fsp.readFile(join(dir, f), 'utf8')
+        const fm = parseFrontmatter(raw)
+        out.push({
+          name: fm.name || f.replace(/\.md$/, ''),
+          description: fm.description || '',
+          body: stripFrontmatter(raw).trim()
+        })
+      }
+      return out
+    } catch {
+      return []
+    }
+  })
   ipcMain.handle('agents:list', async (_e, ws: string) =>
     (await agentManager.list(ws)).map((a) => ({
       name: a.name,

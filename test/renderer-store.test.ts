@@ -6,7 +6,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 ;(globalThis as unknown as { window: unknown }).window = {
   api: {
     // done/error 分支会刷新会话列表（更新侧栏标题/时间）
-    listConversations: async () => []
+    listConversations: async () => [],
+    sendMessage: async () => {} // 排队冲刷时会调用
   },
   matchMedia: () => ({ matches: false }),
   addEventListener: () => {},
@@ -77,6 +78,21 @@ describe('handleAgentEvent 多会话状态机', () => {
     const s = useStore.getState()
     expect(s.streaming).toBe(false)
     expect(s.runningIds).toEqual([])
+  })
+
+  it('推理链事件追加到 streamingReasoning', () => {
+    fire('A', { type: 'reasoning', text: '先想想' })
+    fire('A', { type: 'reasoning', text: '……' })
+    expect(useStore.getState().streamingReasoning).toBe('先想想……')
+  })
+
+  it('运行中 send() 排队，done 后自动发送', async () => {
+    useStore.getState().send('排队的消息')
+    expect(useStore.getState().queued?.text).toBe('排队的消息')
+    fire('A', { type: 'done' })
+    // done 用 setTimeout(0) 冲刷队列
+    await new Promise((r) => setTimeout(r, 5))
+    expect(useStore.getState().queued).toBeNull()
   })
 
   it('前台 assistant 消息落地后清空流式缓冲', () => {
