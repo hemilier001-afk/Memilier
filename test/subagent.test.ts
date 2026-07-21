@@ -60,6 +60,25 @@ describe('runSubAgent', () => {
     expect(report).toContain('子 agent 的报告')
   })
 
+  it('实时进度通过 onProgress 回传（至少一次「思考中」）', async () => {
+    h.fake.chat.mockResolvedValueOnce({ content: '完成。', toolCalls: [] })
+    const { runSubAgent } = await import('../src/main/agent/loop')
+    const traces: string[] = []
+    await runSubAgent({
+      agentName: undefined,
+      task: '干活',
+      workspace: '/tmp',
+      parentModelId: 'ollama::m',
+      permission: { request: vi.fn().mockResolvedValue(true) } as any,
+      signal: new AbortController().signal,
+      skillDirs: [],
+      depth: 0,
+      onProgress: (t) => traces.push(t)
+    })
+    expect(traces.length).toBeGreaterThan(0)
+    expect(traces.some((t) => t.includes('思考中'))).toBe(true)
+  })
+
   it('depth>=1 时拒绝再派生（禁递归）', async () => {
     const { runSubAgent } = await import('../src/main/agent/loop')
     const report = await runSubAgent({

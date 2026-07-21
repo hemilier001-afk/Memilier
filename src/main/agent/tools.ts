@@ -22,8 +22,13 @@ export interface ToolContext {
   recordDiff?: (path: string, before: string, after: string) => void
   /** 更新执行计划（供 Plan 面板展示） */
   setPlan?: (steps: PlanStep[]) => void
-  /** 派生一个子 agent 完成一个专注子任务，返回其最终报告（多 agent 编排；由 loop.ts 注入） */
-  spawnAgent?: (opts: { agent?: string; task: string }) => Promise<string>
+  /** 派生一个子 agent 完成一个专注子任务，返回其最终报告（多 agent 编排；由 loop.ts 注入）。
+   *  onProgress：子 agent 每步的实时进度（回传到该 spawn_agent 工具卡片显示） */
+  spawnAgent?: (opts: {
+    agent?: string
+    task: string
+    onProgress?: (trace: string) => void
+  }) => Promise<string>
   /** 可派生的子 agent 类型（供 spawn_agent 描述/报错提示；由 loop.ts 注入） */
   agentTypes?: { name: string; description: string }[]
 }

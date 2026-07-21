@@ -249,9 +249,13 @@ async function executeToolCall(
   }
   tc.status = 'running'
   try {
-    const r = isMcp
-      ? await mcpManager.callTool(tc.name, tc.args)
-      : await tool!.execute(parsedArgs, ctx)
+    const doExec = (): Promise<string> =>
+      isMcp ? mcpManager.callTool(tc.name, tc.args) : tool!.execute(parsedArgs, ctx)
+    // 写/执行类按工作区串行（防并行子 agent 互相覆盖）；只读并行无妨
+    const r =
+      !isMcp && tool!.sideEffect !== 'none'
+        ? await withWorkspaceLock(ctx.workspace, doExec)
+        : await doExec()
     tc.status = 'done'
     tc.result = r
     return r
@@ -263,7 +267,20 @@ async function executeToolCall(
 }
 
 const SUB_MAX_ITERATIONS = 14
-const MAX_SUBAGENT_REPORT = 12_000
+const MAX_SUBAGENT_REPORT = 6_000
+
+// 按 key 串行的异步互斥锁：并行子 agent 对同一工作区的写/执行操作排队执行，
+// 避免两个 code 子 agent 同时改同一批文件相互覆盖（Claude 用 git worktree 隔离，这里用写锁）。
+const wsWriteLocks = new Map<string, Promise<unknown>>()
+function withWorkspaceLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const prev = wsWriteLocks.get(key) ?? Promise.resolve()
+  const run = prev.then(fn, fn)
+  wsWriteLocks.set(
+    key,
+    run.catch(() => {})
+  )
+  return run
+}
 
 /** 派生一个子 agent 跑一个专注子任务，返回最终报告（多 agent 编排的核心原语）。
  *  子 agent：独立上下文、按定义过滤的工具白名单、可覆盖模型；不能再派生（禁递归）；
@@ -278,6 +295,8 @@ export async function runSubAgent(opts: {
   skillDirs: string[]
   conversationId?: string
   depth: number
+  onProgress?: (trace: string) => void
+  recordDiff?: (path: string, before: string, after: string) => void
 }): Promise<string> {
   const { workspace, task, permission, signal, skillDirs, conversationId } = opts
   if (opts.depth >= 1) return '（子 agent 不能再派生子 agent，请由主 agent 统筹。）'
@@ -320,7 +339,7 @@ export async function runSubAgent(opts: {
       wsListing ? `工作区顶层：${wsListing}` : '',
       '',
       '要求：',
-      '- 你只负责【这一个子任务】，完成后用简洁的**最终报告**回复（做了什么、关键结论/文件、验证结果），不要反问、不要客套。',
+      '- 你只负责【这一个子任务】，完成后用**简洁**的最终报告回复（做了什么、关键结论/文件、验证结果，控制在几段以内），不要反问、不要客套、不要大段贴代码或原文。',
       '- 改文件用 edit_file/write_file、执行命令用 run_command（会请求用户授权）；只读调研用 read_file/list_dir/glob/grep。',
       '- 所有操作限定在工作区内。',
       `- ${shellHint}`,
@@ -332,12 +351,18 @@ export async function runSubAgent(opts: {
   const messages: Message[] = [
     { id: randomUUID(), role: 'user', content: task, createdAt: Date.now() }
   ]
-  const ctx: ToolContext = { workspace, conversationId, skillDirs }
+  const ctx: ToolContext = { workspace, conversationId, skillDirs, recordDiff: opts.recordDiff }
   const trace: string[] = []
   let lastContent = ''
+  const label = def ? `子 agent「${def.name}」` : '子 agent'
+  const emit = (cur: string): void =>
+    opts.onProgress?.(
+      `⚙️ ${label} 运行中（${trace.length} 步）：${[...trace, cur].filter(Boolean).join(' → ')}`
+    )
 
   for (let i = 0; i < SUB_MAX_ITERATIONS; i++) {
     if (signal.aborted) break
+    emit('思考中…')
     const { content, toolCalls } = await provider.chat({
       model,
       messages: [sys, ...sanitizeToolPairing(trimHistory(messages))],
@@ -357,6 +382,7 @@ export async function runSubAgent(opts: {
       if (signal.aborted) break
       const r = await executeToolCall(tc, ctx, { permission, signal, settings, allowMcp: false })
       trace.push(tc.status === 'error' || tc.status === 'denied' ? `${tc.name}✗` : tc.name)
+      emit('')
       messages.push({
         id: randomUUID(),
         role: 'tool',
@@ -367,7 +393,6 @@ export async function runSubAgent(opts: {
     }
   }
 
-  const label = def ? `子 agent「${def.name}」` : '子 agent'
   const body = (lastContent.trim() || '（未产出文本报告）').slice(0, MAX_SUBAGENT_REPORT)
   const steps = trace.length
     ? `\n\n———（${label} 用了 ${trace.length} 步：${trace.join(' → ')}）`
@@ -452,8 +477,11 @@ export async function runAgent(opts: RunOptions): Promise<void> {
   // 可派生的子 agent 清单（仅 auto 模式注入；plan/chat 不派生）
   const agentsSection =
     mode === 'auto' && agentDefs.length
-      ? '\n\n可派生的子 agent（用 spawn_agent 工具：agent 填类型名、task 写明确子任务；可在同一轮里派生多个并行执行，各自返回报告后你汇总）。何时用：任务能拆成独立子任务，或需在大量文件里并行调研；简单任务自己做。可用类型：\n' +
-        agentDefs.map((a) => `- ${a.name}：${a.description}`).join('\n')
+      ? '\n\n可派生的子 agent（用 spawn_agent 工具：agent 填类型名、task 写明确子任务）。何时用：任务能拆成独立子任务，或需在大量文件里并行调研；简单任务自己做。**并行只用于只读调研或互不重叠文件的子任务；会改到同一批文件的请串行派生（一次一个），避免相互覆盖。** 可用类型：\n' +
+        agentDefs
+          .slice(0, 12)
+          .map((a) => `- ${a.name}：${a.description.slice(0, 120)}`)
+          .join('\n')
       : ''
   const custom = settings.customInstructions?.[conv.kind]?.trim()
   const system: Message = {
@@ -466,29 +494,39 @@ export async function runAgent(opts: RunOptions): Promise<void> {
       MODE_HINT[mode],
     createdAt: 0
   }
+  const recordDiff = (p: string, before: string, after: string): void => {
+    // 大文件改动只发统计占位：几 MB 的 before/after 会撑爆渲染端内存与 Diff 面板
+    const MAX_DIFF_CHARS = 400_000
+    if (before.length + after.length > MAX_DIFF_CHARS) {
+      const note = `（文件过大，不展示逐行 diff：改动前 ${before.length} 字符 → 改动后 ${after.length} 字符）`
+      send({
+        type: 'diff',
+        entry: { id: randomUUID(), path: p, before: '', after: note, at: Date.now() }
+      })
+      return
+    }
+    send({ type: 'diff', entry: { id: randomUUID(), path: p, before, after, at: Date.now() } })
+  }
   const ctx = {
     workspace,
     conversationId,
     skillDirs: pluginSkillDirs,
-    recordDiff: (p: string, before: string, after: string) => {
-      // 大文件改动只发统计占位：几 MB 的 before/after 会撑爆渲染端内存与 Diff 面板
-      const MAX_DIFF_CHARS = 400_000
-      if (before.length + after.length > MAX_DIFF_CHARS) {
-        const note = `（文件过大，不展示逐行 diff：改动前 ${before.length} 字符 → 改动后 ${after.length} 字符）`
-        send({
-          type: 'diff',
-          entry: { id: randomUUID(), path: p, before: '', after: note, at: Date.now() }
-        })
-        return
-      }
-      send({ type: 'diff', entry: { id: randomUUID(), path: p, before, after, at: Date.now() } })
-    },
+    recordDiff,
     setPlan: (steps: import('@shared/types').PlanStep[]) => {
       conv.plan = steps
       store.saveConversation(conv)
       send({ type: 'plan', plan: steps })
     },
-    spawnAgent: ({ agent, task }: { agent?: string; task: string }) =>
+    // 子 agent 的文件改动同样进 Diff 面板；进度回传由 execOne 绑定到具体工具卡片
+    spawnAgent: ({
+      agent,
+      task,
+      onProgress
+    }: {
+      agent?: string
+      task: string
+      onProgress?: (trace: string) => void
+    }) =>
       runSubAgent({
         agentName: agent,
         task,
@@ -498,7 +536,9 @@ export async function runAgent(opts: RunOptions): Promise<void> {
         signal,
         skillDirs: pluginSkillDirs,
         conversationId,
-        depth: 0
+        depth: 0,
+        onProgress,
+        recordDiff
       }),
     agentTypes: agentDefs.map((a) => ({ name: a.name, description: a.description }))
   }
@@ -608,9 +648,27 @@ export async function runAgent(opts: RunOptions): Promise<void> {
         tc.status = 'running'
         send({ type: 'tool_call_result', id: tc.id, status: 'running' })
         try {
+          // spawn_agent：给它一个能把子 agent 进度实时回传到本工具卡片的 ctx
+          const execCtx =
+            !isMcp && tool!.name === 'spawn_agent'
+              ? {
+                  ...ctx,
+                  spawnAgent: (o: { agent?: string; task: string }) =>
+                    ctx.spawnAgent({
+                      ...o,
+                      onProgress: (trace: string) =>
+                        send({
+                          type: 'tool_call_result',
+                          id: tc.id,
+                          status: 'running',
+                          result: trace
+                        })
+                    })
+                }
+              : ctx
           const r = isMcp
             ? await mcpManager.callTool(tc.name, tc.args)
-            : await tool!.execute(parsedArgs, ctx)
+            : await tool!.execute(parsedArgs, execCtx)
           tc.status = 'done'
           tc.result = r
           resultTexts.set(tc.id, r)
