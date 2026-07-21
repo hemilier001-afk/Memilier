@@ -260,17 +260,27 @@ export function MessageView({
 }
 
 function AssistantAvatar({ active = false }: { active?: boolean }): JSX.Element {
-  // 与 APP 图标同一份绘制（同比例、同色值），保证品牌一致；active 时圆环做「呼吸」缩放
+  // 静态：与 APP 图标同色（珊瑚底 + 奶白环），保证品牌一致。
+  // 生成中（active）：反转配色——白底 + 红环并「呼吸」缩放，突出动态、更醒目。
   return (
     <svg viewBox="0 0 100 100" className="mt-0.5 h-7 w-7 shrink-0" aria-hidden="true">
-      <rect x="6" y="6" width="88" height="88" rx="22" fill="#d2552c" />
+      <rect
+        x="6"
+        y="6"
+        width="88"
+        height="88"
+        rx="22"
+        fill={active ? '#ffffff' : '#d2552c'}
+        stroke={active ? '#e6e6e6' : 'none'}
+        strokeWidth={active ? 2 : 0}
+      />
       <circle
         className={active ? 'ring-pulse' : undefined}
         cx="50"
         cy="50"
         r="29"
         fill="none"
-        stroke="#fbf3ea"
+        stroke={active ? '#e5352b' : '#fbf3ea'}
         strokeWidth="12"
       />
     </svg>
