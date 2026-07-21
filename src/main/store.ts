@@ -1,5 +1,12 @@
 import { randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  writeFileSync
+} from 'node:fs'
 import path from 'node:path'
 import { app, safeStorage } from 'electron'
 import type { Conversation, ConversationKind, Message, Project, Settings } from '@shared/types'
@@ -48,10 +55,13 @@ let loaded = false
 let convSaveTimer: ReturnType<typeof setTimeout> | null = null
 let settingsPath = ''
 let convPath = ''
+let convDir = ''
 let projectsPath = ''
 let settings: Settings
 let conversations: Record<string, Conversation> = {}
 let projects: Record<string, Project> = {}
+// 防抖期间累积的"待落盘会话 id"：只重写变化的那几个会话文件，而非整库（旧单文件方案的性能天花板）
+const dirtyConvIds = new Set<string>()
 
 function defaults(): Settings {
   return {
@@ -92,16 +102,81 @@ function writeJSON(file: string, data: unknown): void {
   renameSync(tmp, file)
 }
 
+// ——— 会话按文件持久化：一会话一文件 <convDir>/<id>.json ———
+function convFile(id: string): string {
+  return path.join(convDir, `${id}.json`)
+}
+/** 落盘单个会话（原子写）；只有它变化时才重写它的文件，不动其它会话 */
+function persistConv(c: Conversation): void {
+  try {
+    writeJSON(convFile(c.id), c)
+  } catch (e) {
+    console.error(`[store] 保存会话 ${c.id} 失败：`, e)
+  }
+}
+/** 把脏集里的会话逐个落盘 */
+function flushDirtyConvs(): void {
+  convSaveTimer = null
+  for (const id of dirtyConvIds) {
+    const c = conversations[id]
+    if (c) persistConv(c)
+  }
+  dirtyConvIds.clear()
+}
+function removeConvFile(id: string): void {
+  try {
+    if (existsSync(convFile(id))) renameSync(convFile(id), `${convFile(id)}.deleted`)
+  } catch {
+    /* 删除失败忽略：下次启动会作为孤儿被跳过 */
+  }
+}
+/** 从会话目录加载全部会话；单个文件损坏只跳过它（不连累整库，比旧单文件方案更稳） */
+function loadConvDir(): Record<string, Conversation> {
+  const out: Record<string, Conversation> = {}
+  let files: string[] = []
+  try {
+    files = readdirSync(convDir)
+  } catch {
+    return out
+  }
+  for (const f of files) {
+    if (!f.endsWith('.json')) continue
+    try {
+      const c = JSON.parse(readFileSync(path.join(convDir, f), 'utf8')) as Conversation
+      if (c && c.id) out[c.id] = c
+    } catch (e) {
+      console.error(`[store] 会话文件 ${f} 损坏，已跳过：`, e)
+    }
+  }
+  return out
+}
+
 function ensure(): void {
   if (loaded) return
   const dir = app.getPath('userData')
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
   settingsPath = path.join(dir, 'settings.json')
   convPath = path.join(dir, 'conversations.json')
+  convDir = path.join(dir, 'conversations')
   projectsPath = path.join(dir, 'projects.json')
   settings = withDecryptedKeys({ ...defaults(), ...readJSON<Partial<Settings>>(settingsPath, {}) })
-  conversations = readJSON<Record<string, Conversation>>(convPath, {})
   projects = readJSON<Record<string, Project>>(projectsPath, {})
+
+  // 会话存储迁移：旧版单文件 conversations.json → 一会话一文件目录。
+  // 迁移时把旧文件重命名为 .migrated.bak（保留原始数据，绝不删除，杜绝数据丢失）。
+  if (!existsSync(convDir)) {
+    mkdirSync(convDir, { recursive: true })
+    if (existsSync(convPath)) {
+      const old = readJSON<Record<string, Conversation>>(convPath, {})
+      for (const c of Object.values(old)) if (c && c.id) persistConv(c)
+      try {
+        renameSync(convPath, `${convPath}.migrated-${Date.now()}.bak`)
+      } catch {
+        /* 备份改名失败也无妨，数据已在新目录 */
+      }
+    }
+  }
+  conversations = loadConvDir()
   loaded = true
   migrateModelIds()
 }
@@ -125,7 +200,7 @@ function migrateModelIds(): void {
       changed = true
     }
   }
-  if (changed) writeJSON(convPath, conversations)
+  if (changed) for (const c of Object.values(conversations)) persistConv(c)
 }
 
 export const store = {
@@ -183,7 +258,7 @@ export const store = {
         np++
       }
     }
-    if (nc) writeJSON(convPath, conversations)
+    if (nc) for (const c of data.conversations ?? []) if (c && c.id) persistConv(c)
     if (np) writeJSON(projectsPath, projects)
     if (data.settings) {
       // 导入的设置不带 API Key（导出时已抹掉）；保留本机已有的 providers Key
@@ -251,21 +326,19 @@ export const store = {
   saveConversation(c: Conversation): void {
     ensure()
     conversations[c.id] = c
-    // 防抖合并写：agent 循环里每条消息/每批工具结果都会保存，整库同步重写代价大。
-    // 300ms 内的多次保存合并为一次；退出前由 flush() 兜底落盘。
+    dirtyConvIds.add(c.id)
+    // 防抖合并写：agent 循环里每条消息/每批工具结果都会保存。300ms 内的多次保存合并为一次，
+    // 只重写"脏"的那几个会话文件（不再整库重写）；退出前由 flush() 兜底落盘。
     if (convSaveTimer) return
-    convSaveTimer = setTimeout(() => {
-      convSaveTimer = null
-      writeJSON(convPath, conversations)
-    }, 300)
+    convSaveTimer = setTimeout(flushDirtyConvs, 300)
   },
   /** 把防抖中的对话立即落盘（应用退出前调用） */
   flush(): void {
     if (convSaveTimer) {
       clearTimeout(convSaveTimer)
       convSaveTimer = null
-      writeJSON(convPath, conversations)
     }
+    flushDirtyConvs()
   },
   createConversation(kind: ConversationKind = 'chat', projectId?: string): Conversation {
     ensure()
@@ -283,20 +356,21 @@ export const store = {
       updatedAt: now
     }
     conversations[c.id] = c
-    writeJSON(convPath, conversations)
+    persistConv(c)
     return c
   },
   deleteConversation(id: string): void {
     ensure()
     delete conversations[id]
-    writeJSON(convPath, conversations)
+    dirtyConvIds.delete(id)
+    removeConvFile(id)
   },
   renameConversation(id: string, title: string): void {
     ensure()
     const c = conversations[id]
     if (c) {
       c.title = title
-      writeJSON(convPath, conversations)
+      persistConv(c)
     }
   },
   setConversationModel(id: string, model: string): void {
@@ -304,7 +378,7 @@ export const store = {
     const c = conversations[id]
     if (c) {
       c.model = model
-      writeJSON(convPath, conversations)
+      persistConv(c)
     }
   },
   setConversationMode(id: string, mode: 'auto' | 'plan' | 'chat'): void {
@@ -312,7 +386,7 @@ export const store = {
     const c = conversations[id]
     if (c) {
       c.mode = mode
-      writeJSON(convPath, conversations)
+      persistConv(c)
     }
   },
   setConversationDistilled(id: string): void {
@@ -320,7 +394,7 @@ export const store = {
     const c = conversations[id]
     if (c) {
       c.distilled = true
-      writeJSON(convPath, conversations)
+      persistConv(c)
     }
   },
   setConversationPinned(id: string, pinned: boolean): void {
@@ -328,7 +402,7 @@ export const store = {
     const c = conversations[id]
     if (c) {
       c.pinned = pinned || undefined
-      writeJSON(convPath, conversations)
+      persistConv(c)
     }
   },
   setConversationWorkspace(id: string, dir: string): void {
@@ -336,7 +410,7 @@ export const store = {
     const c = conversations[id]
     if (c) {
       c.workspaceDir = dir
-      writeJSON(convPath, conversations)
+      persistConv(c)
     }
   },
   /** 删除末尾的 assistant / tool 消息，回退到最后一条 user 消息（用于「重新生成」） */
@@ -349,7 +423,7 @@ export const store = {
       removed.push(c.messages.pop()!)
     }
     cleanupImages(removed)
-    writeJSON(convPath, conversations)
+    persistConv(c)
   },
 
   /** 截断到某条消息之前（删除该消息及其之后的全部），用于「编辑并重发」 */
@@ -361,7 +435,7 @@ export const store = {
     if (idx >= 0) {
       cleanupImages(c.messages.slice(idx))
       c.messages = c.messages.slice(0, idx)
-      writeJSON(convPath, conversations)
+      persistConv(c)
     }
   },
 
@@ -370,7 +444,7 @@ export const store = {
     const c = conversations[id]
     if (c) {
       c.projectId = projectId ?? undefined
-      writeJSON(convPath, conversations)
+      persistConv(c)
     }
   },
 
@@ -411,6 +485,6 @@ export const store = {
         changed = true
       }
     }
-    if (changed) writeJSON(convPath, conversations)
+    if (changed) for (const c of Object.values(conversations)) persistConv(c)
   }
 }
