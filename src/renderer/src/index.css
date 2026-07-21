@@ -186,20 +186,39 @@ body {
   letter-spacing: 0.01em;
 }
 
-/* 品牌圆环「呼吸」动画：模型生成回答时，头像里的圆圈周期性缩放 */
+/* 品牌圆环「呼吸」动画：生成回答时，圆环做心跳式起伏——
+   收缩(并变粗、变淡) → 回弹微涨 → 回落，比单纯缩放更有生命感（同色不换色）。 */
 @keyframes hemi-ring-pulse {
-  0%,
+  0% {
+    transform: scale(1);
+    opacity: 1;
+    stroke-width: 12;
+  }
+  28% {
+    transform: scale(0.6);
+    opacity: 0.7;
+    stroke-width: 17;
+  }
+  52% {
+    transform: scale(1.08);
+    opacity: 1;
+    stroke-width: 9.5;
+  }
+  74% {
+    transform: scale(0.9);
+    opacity: 0.95;
+    stroke-width: 13;
+  }
   100% {
     transform: scale(1);
-  }
-  50% {
-    transform: scale(0.68);
+    opacity: 1;
+    stroke-width: 12;
   }
 }
 .ring-pulse {
   transform-box: fill-box;
   transform-origin: center;
-  animation: hemi-ring-pulse 1.15s ease-in-out infinite;
+  animation: hemi-ring-pulse 1.5s cubic-bezier(0.45, 0, 0.35, 1) infinite;
 }
 
 /* 无系统标题栏时的窗口拖动区域 */
