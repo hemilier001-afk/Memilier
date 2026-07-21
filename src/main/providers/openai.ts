@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { Message, ModelInfo, ToolCall } from '@shared/types'
 import type { ChatOptions, ChatResult, ModelProvider } from './types'
 import { stallGuard } from './util'
+import { netFetch } from './netfetch'
 
 const STALL_MS = 60_000
 
@@ -108,7 +109,7 @@ export class OpenAICompatProvider implements ModelProvider {
 
   async listModels(): Promise<ModelInfo[]> {
     try {
-      const res = await fetch(`${this.baseUrl}/models`, { headers: this.headers() })
+      const res = await netFetch(`${this.baseUrl}/models`, { headers: this.headers() })
       if (!res.ok) return []
       const data = (await res.json()) as { data?: { id: string }[] }
       return (data.data ?? []).map((m) => ({ name: m.id }))
@@ -138,10 +139,12 @@ export class OpenAICompatProvider implements ModelProvider {
   }
 
   private async request(opts: ChatOptions, withTools: boolean): Promise<ChatResult> {
-    const body = {
+    const body: Record<string, unknown> = {
       model: opts.model,
       messages: toOpenAIMessages(opts.messages),
       stream: true,
+      ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
+      ...(opts.maxTokens !== undefined ? { max_tokens: opts.maxTokens } : {}),
       tools: withTools
         ? opts.tools?.map((t) => ({
             type: 'function',
@@ -152,7 +155,7 @@ export class OpenAICompatProvider implements ModelProvider {
 
     const guard = stallGuard(opts.signal, STALL_MS)
     try {
-      const res = await fetch(`${this.baseUrl}/chat/completions`, {
+      const res = await netFetch(`${this.baseUrl}/chat/completions`, {
         method: 'POST',
         headers: this.headers(),
         body: JSON.stringify(body),
@@ -168,6 +171,7 @@ export class OpenAICompatProvider implements ModelProvider {
       const decoder = new TextDecoder()
       let buffer = ''
       let content = ''
+      let reasoning = ''
       const toolChoices: ToolChoice[] = []
 
       while (true) {
@@ -185,7 +189,9 @@ export class OpenAICompatProvider implements ModelProvider {
           if (payload === '[DONE]') continue
 
           let json: {
-            choices?: (ToolChoice & { delta?: { content?: string } })[]
+            choices?: (ToolChoice & {
+              delta?: { content?: string; reasoning_content?: string; reasoning?: string }
+            })[]
             error?: { message?: string } | string
           }
           try {
@@ -200,6 +206,11 @@ export class OpenAICompatProvider implements ModelProvider {
 
           const choice = json.choices?.[0]
           if (!choice) continue
+          const rc = choice.delta?.reasoning_content ?? choice.delta?.reasoning
+          if (rc) {
+            reasoning += rc
+            opts.onReasoning?.(rc)
+          }
           if (choice.delta?.content) {
             content += choice.delta.content
             opts.onToken?.(choice.delta.content)
@@ -208,7 +219,11 @@ export class OpenAICompatProvider implements ModelProvider {
         }
       }
 
-      return { content, toolCalls: extractToolCalls(toolChoices) }
+      return {
+        content,
+        toolCalls: extractToolCalls(toolChoices),
+        reasoning: reasoning || undefined
+      }
     } finally {
       guard.dispose()
     }

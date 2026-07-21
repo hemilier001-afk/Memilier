@@ -233,6 +233,7 @@ export function MessageView({
       <AssistantAvatar />
       <div className="min-w-0 flex-1">
         <div className="mb-1 text-xs font-semibold text-muted">hemilier</div>
+        {message.reasoning ? <ReasoningBlock text={message.reasoning} /> : null}
         {message.content && <Markdown text={message.content} />}
         {message.toolCalls?.map((tc) => (
           <ToolCallCard key={tc.id} tc={tc} />
@@ -276,19 +277,41 @@ function AssistantAvatar({ active = false }: { active?: boolean }): JSX.Element 
   )
 }
 
-export function StreamingBubble({ text }: { text: string }): JSX.Element {
+// 推理链（思考过程）可折叠块：Claude 式，默认折叠，弱化展示
+function ReasoningBlock({ text, open = false }: { text: string; open?: boolean }): JSX.Element {
+  const t = useT()
+  return (
+    <details open={open} className="mb-1.5">
+      <summary className="cursor-pointer list-none text-xs text-muted transition hover:text-fg [&::-webkit-details-marker]:hidden">
+        {t('reasoningLabel')} ▸
+      </summary>
+      <div className="my-1 whitespace-pre-wrap border-l-2 border-line pl-3 text-xs leading-relaxed text-muted">
+        {text}
+      </div>
+    </details>
+  )
+}
+
+export function StreamingBubble({
+  text,
+  reasoning
+}: {
+  text: string
+  reasoning?: string
+}): JSX.Element {
   const t = useT()
   return (
     <div className="flex gap-3">
       <AssistantAvatar active />
       <div className="min-w-0 flex-1">
         <div className="mb-1 text-xs font-semibold text-muted">hemilier</div>
+        {reasoning ? <ReasoningBlock text={reasoning} open={!text} /> : null}
         {text ? (
           <div className="relative">
             <Markdown text={text} />
             <span className="cursor-blink text-accent" />
           </div>
-        ) : (
+        ) : reasoning ? null : (
           <span className="text-sm text-muted">{t('thinking')}</span>
         )}
       </div>

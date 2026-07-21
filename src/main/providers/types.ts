@@ -6,11 +6,19 @@ export interface ChatOptions {
   tools?: ToolDef[]
   signal?: AbortSignal
   onToken?: (text: string) => void
+  /** 推理链分片（如 deepseek-reasoner 的 reasoning_content、qwen3 thinking）实时回传 */
+  onReasoning?: (text: string) => void
+  /** 采样温度（省略则用端点默认） */
+  temperature?: number
+  /** 最大生成 token（省略则用端点默认） */
+  maxTokens?: number
 }
 
 export interface ChatResult {
   content: string
   toolCalls: ToolCall[]
+  /** 完整推理链（若模型返回） */
+  reasoning?: string
 }
 
 /**

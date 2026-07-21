@@ -1,6 +1,7 @@
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { app, BrowserWindow, nativeImage, screen, session, shell } from 'electron'
+import { netFetch } from './providers/netfetch'
 import { registerIpc } from './ipc'
 import { setupAppMenu } from './menu'
 import { mcpManager } from './mcp/manager'
@@ -186,7 +187,7 @@ function checkForUpdate(): void {
   if (process.env['ELECTRON_RENDERER_URL']) return // 开发模式跳过
   setTimeout(async () => {
     try {
-      const res = await fetch(
+      const res = await netFetch(
         'https://api.github.com/repos/hemilier001-afk/Memilier/releases/latest',
         { headers: { Accept: 'application/vnd.github+json' }, signal: AbortSignal.timeout(8000) }
       )

@@ -23,6 +23,8 @@ export interface Message {
   toolCalls?: ToolCall[]
   /** 仅 tool：对应的 toolCall id */
   toolCallId?: string
+  /** 仅 assistant：模型的推理链（如 deepseek-reasoner），可折叠展示 */
+  reasoning?: string
   createdAt: number
 }
 
@@ -171,6 +173,12 @@ export interface Settings {
   submitKey?: 'enter' | 'mod-enter'
   /** 本地个人资料（昵称用于问候语；仅存本机，将来可替换为云端账号体系） */
   profile?: { name?: string; email?: string }
+  /** 采样温度（0-2，作用于所有对话；省略=端点默认） */
+  temperature?: number
+  /** 最大生成 token（省略=端点默认） */
+  maxTokens?: number
+  /** 网络代理地址，如 http://127.0.0.1:7890（空=跟随系统代理）。作用于所有云端/本地 API 请求 */
+  proxyUrl?: string
 }
 
 export interface ModelInfo {
@@ -246,6 +254,7 @@ export interface ToolDef {
 /** 主进程 → 渲染进程的流式智能体事件 */
 export type AgentEvent =
   | { type: 'token'; text: string }
+  | { type: 'reasoning'; text: string }
   | { type: 'tool_call_start'; toolCall: ToolCall }
   | {
       type: 'tool_call_result'

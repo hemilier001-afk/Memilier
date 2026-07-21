@@ -17,6 +17,8 @@ let listenersAttached = false
 
 // 各会话的流式文本缓冲（非响应式；切回该会话时恢复未完成的输出）
 const streamTexts = new Map<string, string>()
+// 各会话的推理链缓冲（deepseek-reasoner 等）
+const streamReasons = new Map<string, string>()
 
 function applyTheme(theme: Settings['theme']): void {
   const dark =
@@ -37,6 +39,10 @@ interface UIState {
   active: Conversation | null
   streaming: boolean
   streamingText: string
+  /** 当前会话的实时推理链（思考过程） */
+  streamingReasoning: string
+  /** 运行中排队的下一条消息（Claude 式：干活时可先排队） */
+  queued: { text: string; images: string[] } | null
   /** 正在运行的会话 id（按会话跟踪；streaming 仅反映当前 active 会话） */
   runningIds: string[]
   permission: PermissionRequest | null
@@ -118,6 +124,8 @@ export const useStore = create<UIState>((set, get) => ({
   active: null,
   streaming: false,
   streamingText: '',
+  streamingReasoning: '',
+  queued: null,
   runningIds: [],
   permission: null,
   permissionQueue: [],
@@ -210,6 +218,7 @@ export const useStore = create<UIState>((set, get) => ({
       active: conv,
       streaming: get().runningIds.includes(id),
       streamingText: streamTexts.get(id) ?? '',
+      streamingReasoning: streamReasons.get(id) ?? '',
       plan: conv?.plan ?? [],
       diffs: [],
       terminalOutput: '',
@@ -224,6 +233,7 @@ export const useStore = create<UIState>((set, get) => ({
       conversations,
       active: conv,
       streamingText: '',
+      streamingReasoning: '',
       streaming: false,
       plan: [],
       diffs: [],
@@ -259,6 +269,11 @@ export const useStore = create<UIState>((set, get) => ({
   send: (content, images) => {
     const active = get().active
     if (!active || (!content.trim() && !images?.length)) return
+    // 该会话正在运行 → 排队，等它结束自动发送（Claude 式：干活时可先排下一条）
+    if (get().runningIds.includes(active.id)) {
+      set({ queued: { text: content, images: images ?? [] } })
+      return
+    }
     const userMsg = {
       id: crypto.randomUUID(),
       role: 'user' as const,
@@ -348,9 +363,12 @@ export const useStore = create<UIState>((set, get) => ({
     if (active) {
       void window.api.abort(active.id)
       streamTexts.delete(active.id)
+      streamReasons.delete(active.id)
       set({
         streaming: false,
         streamingText: '',
+        streamingReasoning: '',
+        queued: null,
         runningIds: get().runningIds.filter((i) => i !== active.id)
       })
     }
@@ -470,6 +488,7 @@ export const useStore = create<UIState>((set, get) => ({
       active: null,
       streaming: false,
       streamingText: '',
+      streamingReasoning: '',
       plan: [],
       diffs: [],
       terminalOutput: '',
@@ -544,8 +563,14 @@ export function handleAgentEvent(
       // 后台例程等未经 send() 启动的运行：收到 token 即视为在跑
       set({ runningIds: [...get().runningIds, conversationId] })
     }
+  } else if (event.type === 'reasoning') {
+    streamReasons.set(conversationId, (streamReasons.get(conversationId) ?? '') + event.text)
+    if (!get().runningIds.includes(conversationId)) {
+      set({ runningIds: [...get().runningIds, conversationId] })
+    }
   } else if (event.type === 'done' || event.type === 'error') {
     streamTexts.delete(conversationId)
+    streamReasons.delete(conversationId)
     set({ runningIds: get().runningIds.filter((i) => i !== conversationId) })
   }
 
@@ -560,12 +585,20 @@ export function handleAgentEvent(
       set({ streamingText: streamTexts.get(conversationId) ?? '' })
       break
 
+    case 'reasoning':
+      set({ streamingReasoning: streamReasons.get(conversationId) ?? '' })
+      break
+
     case 'message': {
       const isAssistant = event.message.role === 'assistant'
-      if (isAssistant) streamTexts.delete(conversationId) // 该轮流式文本已成为完整消息
+      if (isAssistant) {
+        streamTexts.delete(conversationId) // 该轮流式文本已成为完整消息
+        streamReasons.delete(conversationId)
+      }
       set({
         active: { ...active, messages: [...active.messages, event.message] },
-        streamingText: isAssistant ? '' : get().streamingText
+        streamingText: isAssistant ? '' : get().streamingText,
+        streamingReasoning: isAssistant ? '' : get().streamingReasoning
       })
       break
     }
@@ -596,15 +629,24 @@ export function handleAgentEvent(
       break
     }
 
-    case 'done':
-      set({ streaming: false, streamingText: '' })
+    case 'done': {
+      set({ streaming: false, streamingText: '', streamingReasoning: '' })
       void window.api.listConversations().then((conversations) => set({ conversations }))
+      // 有排队的下一条消息 → 自动发送（此时该会话已从 runningIds 移除）
+      const q = get().queued
+      if (q) {
+        set({ queued: null })
+        setTimeout(() => get().send(q.text, q.images), 0)
+      }
       break
+    }
 
     case 'error':
       set({
         streaming: false,
         streamingText: '',
+        streamingReasoning: '',
+        queued: null, // 出错则不自动发送排队消息
         active: {
           ...active,
           messages: [

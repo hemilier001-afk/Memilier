@@ -367,7 +367,9 @@ export async function runSubAgent(opts: {
       model,
       messages: [sys, ...sanitizeToolPairing(trimHistory(messages))],
       tools: toolDefs,
-      signal
+      signal,
+      temperature: settings.temperature,
+      maxTokens: settings.maxTokens
     })
     lastContent = content
     messages.push({
@@ -560,21 +562,25 @@ export async function runAgent(opts: RunOptions): Promise<void> {
         sanitizeToolPairing(stripOldImages(trimHistory(conv.messages)))
       )
       partial = ''
-      const { content, toolCalls } = await provider.chat({
+      const { content, toolCalls, reasoning } = await provider.chat({
         model,
         messages: [system, ...sendMessages],
         tools: toolDefs,
         signal,
+        temperature: settings.temperature,
+        maxTokens: settings.maxTokens,
         onToken: (text) => {
           partial += text
           send({ type: 'token', text })
-        }
+        },
+        onReasoning: (text) => send({ type: 'reasoning', text })
       })
 
       const assistantMsg: Message = {
         id: randomUUID(),
         role: 'assistant',
         content,
+        reasoning: reasoning || undefined,
         toolCalls: toolCalls.length ? toolCalls : undefined,
         createdAt: Date.now()
       }

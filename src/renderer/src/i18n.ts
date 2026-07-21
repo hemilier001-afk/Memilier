@@ -55,6 +55,21 @@ const DICT: Dict = {
   submitEnter: { zh: '回车发送（Shift+Enter 换行）', en: 'Enter (Shift+Enter = newline)' },
   submitMod: { zh: '⌘/Ctrl + 回车 发送', en: '⌘/Ctrl + Enter' },
 
+  // 采样 / 代理
+  temperatureLabel: {
+    zh: '采样温度（留空=端点默认；低=严谨，高=发散）',
+    en: 'Temperature (blank = endpoint default; low = precise, high = creative)'
+  },
+  maxTokensLabel: {
+    zh: '最大生成 token（留空=端点默认）',
+    en: 'Max output tokens (blank = endpoint default)'
+  },
+  proxyLabel: { zh: '网络代理', en: 'Network proxy' },
+  proxyHint: {
+    zh: '如 http://127.0.0.1:7890。留空=跟随系统代理。作用于所有云端/本地模型请求（国内接海外 API 时用）。',
+    en: 'e.g. http://127.0.0.1:7890. Blank = follow system proxy. Applies to all model requests.'
+  },
+
   // 设置 - 通用
   language: { zh: '语言', en: 'Language' },
   theme: { zh: '主题', en: 'Theme' },
@@ -205,6 +220,11 @@ const DICT: Dict = {
   edit: { zh: '编辑', en: 'Edit' },
   regenerate: { zh: '重新生成', en: 'Regenerate' },
   thinking: { zh: '思考中…', en: 'Thinking…' },
+  reasoningLabel: { zh: '💭 思考过程', en: '💭 Reasoning' },
+  queuedLabel: {
+    zh: '已排队（当前任务结束后发送）',
+    en: 'Queued (sends when current run finishes)'
+  },
   runningTools: { zh: '执行工具', en: 'Running tools' },
   toolCallsCount: { zh: '{n} 个工具调用', en: '{n} tool calls' },
   workedSteps: { zh: '工作了 {n} 步（{s}）', en: 'Worked {n} steps ({s})' },

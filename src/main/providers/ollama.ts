@@ -2,12 +2,14 @@ import { randomUUID } from 'node:crypto'
 import type { Message, ModelInfo, ToolCall } from '@shared/types'
 import type { ChatOptions, ChatResult, ModelProvider } from './types'
 import { stallGuard } from './util'
+import { netFetch } from './netfetch'
 
 const STALL_MS = 60_000
 
 interface OllamaMsg {
   role: string
   content: string
+  thinking?: string
   images?: string[]
   tool_calls?: { function?: { name?: string; arguments?: Record<string, unknown> | string } }[]
 }
@@ -42,7 +44,7 @@ export class OllamaProvider implements ModelProvider {
 
   async listModels(): Promise<ModelInfo[]> {
     try {
-      const res = await fetch(`${this.baseUrl}/api/tags`)
+      const res = await netFetch(`${this.baseUrl}/api/tags`)
       if (!res.ok) return []
       const data = (await res.json()) as { models?: { name: string; size?: number }[] }
       return (data.models ?? []).map((m) => ({ name: m.name, size: m.size }))
@@ -71,7 +73,11 @@ export class OllamaProvider implements ModelProvider {
       stream: true,
       // Ollama 默认 num_ctx 仅 2048，会截断系统提示+工具定义导致模型"看不到"工具；
       // 调到 16k 与主进程 ~48k 字符的历史裁剪预算量级对齐（否则 Ollama 会先掐掉头部的系统提示）
-      options: { num_ctx: 16384 },
+      options: {
+        num_ctx: 16384,
+        ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
+        ...(opts.maxTokens !== undefined ? { num_predict: opts.maxTokens } : {})
+      },
       tools: withTools
         ? opts.tools?.map((t) => ({
             type: 'function',
@@ -82,7 +88,7 @@ export class OllamaProvider implements ModelProvider {
 
     const guard = stallGuard(opts.signal, STALL_MS)
     try {
-      const res = await fetch(`${this.baseUrl}/api/chat`, {
+      const res = await netFetch(`${this.baseUrl}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -98,6 +104,7 @@ export class OllamaProvider implements ModelProvider {
       const decoder = new TextDecoder()
       let buffer = ''
       let content = ''
+      let reasoning = ''
       const toolCalls: ToolCall[] = []
 
       while (true) {
@@ -124,6 +131,10 @@ export class OllamaProvider implements ModelProvider {
           if (json.error) throw new Error(json.error)
 
           const msg = json.message
+          if (msg?.thinking) {
+            reasoning += msg.thinking
+            opts.onReasoning?.(msg.thinking)
+          }
           if (msg?.content) {
             content += msg.content
             opts.onToken?.(msg.content)
@@ -152,7 +163,7 @@ export class OllamaProvider implements ModelProvider {
         }
       }
 
-      return { content, toolCalls }
+      return { content, toolCalls, reasoning: reasoning || undefined }
     } finally {
       guard.dispose()
     }

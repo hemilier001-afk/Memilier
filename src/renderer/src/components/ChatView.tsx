@@ -619,6 +619,7 @@ function Composer(): JSX.Element {
   const streaming = useStore((s) => s.streaming)
   const send = useStore((s) => s.send)
   const editResend = useStore((s) => s.editResend)
+  const queued = useStore((s) => s.queued)
   const abort = useStore((s) => s.abort)
   const active = useStore((s) => s.active)
   const pendingEdit = useStore((s) => s.pendingEdit)
@@ -762,12 +763,12 @@ function Composer(): JSX.Element {
       if (ref.current) ref.current.style.height = 'auto'
       return
     }
-    if (streaming || (!text.trim() && images.length === 0)) return
-    if (editingId) {
+    if (!text.trim() && images.length === 0) return
+    if (editingId && !streaming) {
       void editResend(editingId, text)
       setEditingId(null)
     } else {
-      send(text, images)
+      send(text, images) // send() 自行判断：该会话运行中则排队，结束后自动发送
     }
     setText('')
     setImages([])
@@ -863,6 +864,19 @@ function Composer(): JSX.Element {
         {memToast && (
           <div className="mb-1 rounded-lg bg-accent-soft px-3 py-1 text-xs text-accent">
             {t('memSavedToast')}
+          </div>
+        )}
+        {queued && (
+          <div className="mb-1 flex items-center gap-2 rounded-lg border border-line bg-surface-2 px-3 py-1 text-xs text-muted">
+            <span className="truncate">
+              ⏳ {t('queuedLabel')}：{queued.text}
+            </span>
+            <button
+              onClick={() => useStore.setState({ queued: null })}
+              className="ml-auto shrink-0 hover:text-fg"
+            >
+              {t('cancel')}
+            </button>
           </div>
         )}
         <div className="rounded-2xl border border-line bg-surface px-3 py-2.5 shadow-sm transition focus-within:border-accent focus-within:shadow-md">
@@ -992,6 +1006,7 @@ export function ChatView(): JSX.Element {
   const view = useStore((s) => s.view)
   const streaming = useStore((s) => s.streaming)
   const streamingText = useStore((s) => s.streamingText)
+  const streamingReasoning = useStore((s) => s.streamingReasoning)
   const regenerate = useStore((s) => s.regenerate)
   const scrollRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
@@ -1108,7 +1123,7 @@ export function ChatView(): JSX.Element {
           ) : (
             renderGrouped(active.messages, streaming, lastAssistantId, regenerate, t as never)
           )}
-          {showStreaming && <StreamingBubble text={streamingText} />}
+          {showStreaming && <StreamingBubble text={streamingText} reasoning={streamingReasoning} />}
         </div>
       </div>
 

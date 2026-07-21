@@ -254,6 +254,53 @@ export function SettingsModal(): JSX.Element | null {
                   </p>
                 </div>
                 <div>
+                  <label className="mb-1 block font-medium">{t('proxyLabel')}</label>
+                  <input
+                    key={`proxy-${settings.proxyUrl ?? ''}`}
+                    defaultValue={settings.proxyUrl ?? ''}
+                    placeholder="http://127.0.0.1:7890"
+                    onBlur={(e) => void update({ proxyUrl: e.target.value.trim() })}
+                    className={input}
+                  />
+                  <p className="mt-1 text-xs text-muted">{t('proxyHint')}</p>
+                </div>
+                <div className="flex gap-3">
+                  <div className="flex-1">
+                    <label className="mb-1 block font-medium">Temperature</label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      max="2"
+                      key={`temp-${settings.temperature ?? ''}`}
+                      defaultValue={settings.temperature ?? ''}
+                      onBlur={(e) =>
+                        void update({
+                          temperature: e.target.value === '' ? undefined : Number(e.target.value)
+                        })
+                      }
+                      className={input}
+                    />
+                  </div>
+                  <div className="flex-1">
+                    <label className="mb-1 block font-medium">Max tokens</label>
+                    <input
+                      type="number"
+                      step="256"
+                      min="1"
+                      key={`maxtok-${settings.maxTokens ?? ''}`}
+                      defaultValue={settings.maxTokens ?? ''}
+                      onBlur={(e) =>
+                        void update({
+                          maxTokens: e.target.value === '' ? undefined : Number(e.target.value)
+                        })
+                      }
+                      className={input}
+                    />
+                  </div>
+                </div>
+                <p className="text-xs text-muted">{t('temperatureLabel')}</p>
+                <div>
                   <label className="mb-1 block font-medium">{t('theme')}</label>
                   <select
                     value={settings.theme}

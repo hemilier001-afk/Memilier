@@ -1,7 +1,7 @@
 import { type ChildProcess, execFile, spawn } from 'node:child_process'
 import { existsSync, statSync, promises as fsp } from 'node:fs'
 import { basename, dirname } from 'node:path'
-import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, session, shell } from 'electron'
 import type {
   AgentEvent,
   Conversation,
@@ -64,11 +64,19 @@ import { bareModel, listAllModels, resolveProvider } from './providers/registry'
 import { routineManager } from './routines/manager'
 import { resolveInWorkspace } from './security'
 import { store } from './store'
+import { netFetch } from './providers/netfetch'
+
+/** 按设置应用网络代理：空=跟随系统代理（多数国内代理软件会设系统代理）；填了=固定服务器 */
+function applyProxy(url?: string): void {
+  const rules = (url ?? '').trim()
+  void session.defaultSession.setProxy(rules ? { proxyRules: rules } : { mode: 'system' })
+}
 
 export function registerIpc(getWindow: () => BrowserWindow | null): void {
   const sendToRenderer = (channel: string, payload: unknown): void => {
     getWindow()?.webContents.send(channel, payload)
   }
+  applyProxy(store.getSettings().proxyUrl) // 启动即应用代理
 
   const permission = new PermissionManager(
     (req: PermissionRequest) => sendToRenderer('permission:request', req),
@@ -101,7 +109,9 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
         )
       }
     }
-    return maskSettings(store.setSettings(patch))
+    const saved = store.setSettings(patch)
+    if ('proxyUrl' in patch) applyProxy(saved.proxyUrl)
+    return maskSettings(saved)
   })
 
   // 列表只回轻量摘要（不带 messages）：侧栏只需标题/时间等，避免整库消息反复过 IPC
@@ -375,7 +385,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     const form = new FormData()
     form.append('model', model)
     form.append('file', new Blob([bytes], { type: mime }), `audio.${ext}`)
-    const res = await fetch(`${provider.baseUrl}/audio/transcriptions`, {
+    const res = await netFetch(`${provider.baseUrl}/audio/transcriptions`, {
       method: 'POST',
       headers: provider.apiKey ? { Authorization: `Bearer ${provider.apiKey}` } : {},
       body: form
@@ -432,7 +442,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     const cfg = (store.getSettings().providers ?? []).find((p) => p.id === providerId)
     if (!cfg) return { ok: false, error: '未找到该提供方' }
     try {
-      const res = await fetch(`${cfg.baseUrl}/models`, {
+      const res = await netFetch(`${cfg.baseUrl}/models`, {
         headers: cfg.apiKey ? { Authorization: `Bearer ${cfg.apiKey}` } : {},
         signal: AbortSignal.timeout(8000)
       })
