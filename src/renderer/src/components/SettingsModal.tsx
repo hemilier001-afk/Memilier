@@ -254,6 +254,37 @@ export function SettingsModal(): JSX.Element | null {
                   </p>
                 </div>
                 <div>
+                  <label className="mb-1 block font-medium">{t('backupTitle')}</label>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() =>
+                        void window.api.exportData().then((r) => {
+                          if (r.ok) setPluginMsg(t('exportedToast'))
+                        })
+                      }
+                      className="rounded-md border border-line bg-surface-2 px-3 py-1.5 text-sm text-fg transition hover:bg-accent-soft"
+                    >
+                      {t('exportBtn')}
+                    </button>
+                    <button
+                      onClick={() =>
+                        void window.api.importData().then((r) => {
+                          if (r.ok) {
+                            setPluginMsg(
+                              t('importedToast').replace('{c}', String(r.conversations ?? 0))
+                            )
+                            void useStore.getState().init()
+                          }
+                        })
+                      }
+                      className="rounded-md border border-line bg-surface-2 px-3 py-1.5 text-sm text-fg transition hover:bg-accent-soft"
+                    >
+                      {t('importBtn')}
+                    </button>
+                  </div>
+                  <p className="mt-1 text-xs text-muted">{t('backupHint')}</p>
+                </div>
+                <div>
                   <label className="mb-1 block font-medium">{t('proxyLabel')}</label>
                   <input
                     key={`proxy-${settings.proxyUrl ?? ''}`}

@@ -143,6 +143,81 @@ export const store = {
     ensure()
     return Object.values(conversations).sort((a, b) => b.updatedAt - a.updatedAt)
   },
+  /** 导出全部数据用于备份/迁移（API Key 不导出，安全） */
+  exportAll(): {
+    version: number
+    conversations: Conversation[]
+    projects: Project[]
+    settings: Settings
+  } {
+    ensure()
+    const safeSettings = {
+      ...settings,
+      providers: (settings.providers ?? []).map((p) => ({ ...p, apiKey: '' }))
+    }
+    return {
+      version: 1,
+      conversations: Object.values(conversations),
+      projects: Object.values(projects),
+      settings: safeSettings
+    }
+  },
+  /** 从备份导入：合并会话与项目（同 id 覆盖），设置按字段合并（不动已存的 API Key） */
+  importAll(data: {
+    conversations?: Conversation[]
+    projects?: Project[]
+    settings?: Partial<Settings>
+  }): { conversations: number; projects: number } {
+    ensure()
+    let nc = 0
+    for (const c of data.conversations ?? []) {
+      if (c && c.id) {
+        conversations[c.id] = c
+        nc++
+      }
+    }
+    let np = 0
+    for (const p of data.projects ?? []) {
+      if (p && p.id) {
+        projects[p.id] = p
+        np++
+      }
+    }
+    if (nc) writeJSON(convPath, conversations)
+    if (np) writeJSON(projectsPath, projects)
+    if (data.settings) {
+      // 导入的设置不带 API Key（导出时已抹掉）；保留本机已有的 providers Key
+      const incoming = { ...data.settings }
+      delete (incoming as { providers?: unknown }).providers
+      settings = { ...settings, ...incoming }
+      writeJSON(settingsPath, withEncryptedKeys(settings))
+    }
+    return { conversations: nc, projects: np }
+  },
+  /** 按关键词检索会话内容（标题 + 消息正文），返回带片段的摘要 */
+  searchConversations(query: string, limit = 30): { id: string; title: string; snippet: string }[] {
+    ensure()
+    const terms = query.toLowerCase().split(/\s+/).filter(Boolean)
+    if (!terms.length) return []
+    const out: { id: string; title: string; snippet: string; score: number; at: number }[] = []
+    for (const c of Object.values(conversations)) {
+      let snippet = ''
+      let score = terms.reduce((n, t) => n + (c.title.toLowerCase().includes(t) ? 2 : 0), 0)
+      for (const m of c.messages) {
+        if (!m.content || m.role === 'system') continue
+        const lc = m.content.toLowerCase()
+        const hit = terms.reduce((n, t) => n + (lc.includes(t) ? 1 : 0), 0)
+        if (hit && !snippet) {
+          const idx = lc.indexOf(terms[0])
+          snippet = m.content.slice(Math.max(0, idx - 30), idx + 90).trim()
+        }
+        score += hit
+      }
+      if (score > 0) out.push({ id: c.id, title: c.title, snippet, score, at: c.updatedAt || 0 })
+    }
+    out.sort((a, b) => b.score - a.score || b.at - a.at)
+    return out.slice(0, limit).map(({ id, title, snippet }) => ({ id, title, snippet }))
+  },
   /** 跨对话按关键词检索历史（供 recall 工具）；返回最相关的片段文本 */
   searchHistory(query: string, excludeId?: string, limit = 8): string {
     ensure()

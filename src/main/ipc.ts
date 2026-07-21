@@ -119,6 +119,35 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     store.listConversations().map((c) => ({ ...c, messages: [] }))
   )
   ipcMain.handle('conversations:get', (_e, id: string) => store.getConversation(id))
+  ipcMain.handle('conversations:search', (_e, q: string) => store.searchConversations(q))
+  ipcMain.handle('data:export', async () => {
+    const win = getWindow()
+    const res = await dialog.showSaveDialog(win ?? undefined!, {
+      title: '导出备份',
+      defaultPath: `hemilier-backup-${new Date().toISOString().slice(0, 10)}.json`,
+      filters: [{ name: 'JSON', extensions: ['json'] }]
+    })
+    if (res.canceled || !res.filePath) return { ok: false }
+    await fsp.writeFile(res.filePath, JSON.stringify(store.exportAll(), null, 2), 'utf8')
+    return { ok: true, path: res.filePath }
+  })
+  ipcMain.handle('data:import', async () => {
+    const win = getWindow()
+    const res = await dialog.showOpenDialog(win ?? undefined!, {
+      title: '导入备份',
+      properties: ['openFile'],
+      filters: [{ name: 'JSON', extensions: ['json'] }]
+    })
+    if (res.canceled || !res.filePaths[0]) return { ok: false }
+    try {
+      const data = JSON.parse(await fsp.readFile(res.filePaths[0], 'utf8'))
+      const r = store.importAll(data)
+      sendToRenderer('conversations:updated', null)
+      return { ok: true, ...r }
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  })
   ipcMain.handle(
     'conversations:create',
     (_e, kind: 'chat' | 'cowork' | 'code' = 'chat', projectId?: string) =>

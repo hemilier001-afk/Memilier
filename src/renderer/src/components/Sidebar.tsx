@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { Conversation } from '@shared/types'
 import { useStore, type View } from '../store'
 import { useT } from '../i18n'
@@ -251,7 +251,23 @@ export function Sidebar(): JSX.Element {
   const collapsed = useStore((s) => s.sidebarCollapsed)
   const setCollapsed = useStore((s) => s.setSidebarCollapsed)
   const [query, setQuery] = useState('')
+  const [contentHits, setContentHits] = useState<{ id: string; title: string; snippet: string }[]>(
+    []
+  )
+  const selectConversation = useStore((s) => s.selectConversation)
   const runningIds = useStore((s) => s.runningIds)
+  // 全局内容搜索：query≥2 字时防抖查消息正文（标题匹配已由下方列表过滤覆盖）
+  useEffect(() => {
+    const q = query.trim()
+    if (q.length < 2) {
+      setContentHits([])
+      return
+    }
+    const id = setTimeout(() => {
+      void window.api.searchConversations(q).then(setContentHits)
+    }, 250)
+    return () => clearTimeout(id)
+  }, [query])
 
   const sorted = useMemo(
     () =>
@@ -427,6 +443,25 @@ export function Sidebar(): JSX.Element {
               ))}
             </div>
           ))}
+          {contentHits.filter((h) => !filtered.some((c) => c.id === h.id)).length > 0 && (
+            <div className="mb-2">
+              <div className="px-2 py-1 text-[11px] text-muted">{t('contentMatches')}</div>
+              {contentHits
+                .filter((h) => !filtered.some((c) => c.id === h.id))
+                .map((h) => (
+                  <button
+                    key={h.id}
+                    onClick={() => void selectConversation(h.id)}
+                    className="block w-full rounded-lg px-2 py-1 text-left transition hover:bg-surface-2"
+                  >
+                    <div className="truncate text-sm text-fg">{h.title}</div>
+                    {h.snippet && (
+                      <div className="truncate text-[11px] text-muted">…{h.snippet}…</div>
+                    )}
+                  </button>
+                ))}
+            </div>
+          )}
         </div>
       </div>
 

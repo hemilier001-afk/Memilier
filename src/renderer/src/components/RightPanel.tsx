@@ -410,6 +410,12 @@ function PreviewView(): JSX.Element {
 function DiffView(): JSX.Element {
   const t = useT()
   const diffs = useStore((s) => s.diffs)
+  const active = useStore((s) => s.active)
+  const revert = (path: string, before: string): void => {
+    if (!active) return
+    if (window.confirm(`${t('diffRevert')}：${path}?`))
+      void window.api.writeWorkspaceFile(active.workspaceDir, path, before)
+  }
   if (!diffs.length) {
     return <div className="p-4 text-sm text-muted">{t('diffEmpty')}</div>
   }
@@ -425,9 +431,16 @@ function DiffView(): JSX.Element {
             <div key={d.id} className="overflow-hidden rounded-lg border border-line">
               <div className="flex items-center justify-between bg-surface px-2 py-1 text-xs">
                 <span className="truncate font-mono">{d.path}</span>
-                <span className="shrink-0 font-mono">
-                  <span className="text-green-500">+{added}</span>{' '}
+                <span className="flex shrink-0 items-center gap-2 font-mono">
+                  <span className="text-green-500">+{added}</span>
                   <span className="text-red-500">-{removed}</span>
+                  <button
+                    onClick={() => revert(d.path, d.before)}
+                    title={t('diffRevert')}
+                    className="rounded border border-line px-1.5 text-[11px] text-muted transition hover:text-fg"
+                  >
+                    ↩
+                  </button>
                 </span>
               </div>
               <pre className="max-h-72 overflow-auto bg-paper text-xs leading-5">
@@ -779,6 +792,26 @@ const TABS: { key: RightTab; label: string }[] = [
 
 export function RightPanel(): JSX.Element | null {
   const t = useT()
+  const [width, setWidth] = useState<number>(() => {
+    const v = Number(localStorage.getItem('rightPanelW'))
+    return v >= 280 && v <= 900 ? v : 384
+  })
+  const startResize = (e: React.MouseEvent): void => {
+    e.preventDefault()
+    const startX = e.clientX
+    const startW = width
+    const onMove = (ev: MouseEvent): void => {
+      const w = Math.min(900, Math.max(280, startW + (startX - ev.clientX)))
+      setWidth(w)
+    }
+    const onUp = (): void => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      localStorage.setItem('rightPanelW', String(width))
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
   const open = useStore((s) => s.rightPanelOpen)
   const view = useStore((s) => s.view)
   const tab = useStore((s) => s.rightTab)
@@ -798,7 +831,14 @@ export function RightPanel(): JSX.Element | null {
       .pop() || active?.workspaceDir
 
   return (
-    <aside className="flex w-96 flex-col border-l border-line bg-paper">
+    <aside
+      style={{ width }}
+      className="relative flex shrink-0 flex-col border-l border-line bg-paper"
+    >
+      <div
+        onMouseDown={startResize}
+        className="absolute left-0 top-0 z-10 h-full w-1 cursor-col-resize hover:bg-accent-soft"
+      />
       <div className="region-drag flex items-center justify-between border-b border-line px-3 pb-1 pt-10">
         <span className="text-sm font-semibold text-fg">{t('wsPanel')}</span>
         <button

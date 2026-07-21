@@ -252,6 +252,19 @@ const DICT: Dict = {
   },
   generating: { zh: '正在生成', en: 'Generating' },
 
+  // 备份 / 搜索
+  backupTitle: { zh: '数据备份', en: 'Backup' },
+  exportBtn: { zh: '导出全部数据…', en: 'Export all data…' },
+  importBtn: { zh: '导入备份…', en: 'Import backup…' },
+  backupHint: {
+    zh: '导出会话/项目/设置为一个 JSON 文件（不含 API Key，安全）；换机或发朋友时导入恢复。',
+    en: 'Export conversations/projects/settings to one JSON (no API keys); import to restore on another machine.'
+  },
+  exportedToast: { zh: '✓ 已导出', en: '✓ Exported' },
+  importedToast: { zh: '✓ 已导入 {c} 个会话', en: '✓ Imported {c} conversations' },
+  contentMatches: { zh: '内容匹配', en: 'In messages' },
+  diffRevert: { zh: '撤销此改动', en: 'Revert' },
+
   // 后台任务弹窗
   tasksTitle: { zh: '后台任务', en: 'Background tasks' },
   tasksEmpty: {

@@ -367,6 +367,12 @@ export interface Api {
   listSkills(): Promise<SkillInfo[]>
   /** 列出可派生的子 agent 类型（内置 + 工作区 + 全局） */
   listAgents(workspaceDir: string): Promise<AgentInfo[]>
+  /** 全局搜索会话（标题 + 消息正文） */
+  searchConversations(query: string): Promise<{ id: string; title: string; snippet: string }[]>
+  /** 导出全部数据为备份文件 */
+  exportData(): Promise<{ ok: boolean; path?: string }>
+  /** 从备份文件导入 */
+  importData(): Promise<{ ok: boolean; conversations?: number; projects?: number; error?: string }>
   listPlugins(): Promise<PluginInfo[]>
   setPluginEnabled(name: string, enabled: boolean): Promise<void>
   openPluginsDir(): Promise<void>
