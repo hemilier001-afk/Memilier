@@ -1,8 +1,17 @@
 import { randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+  watch,
+  type FSWatcher
+} from 'node:fs'
+import { promises as fsp } from 'node:fs'
 import path from 'node:path'
 import { Notification, app } from 'electron'
-import type { AgentEvent, BackgroundTask, Message, Routine } from '@shared/types'
+import type { AgentEvent, BackgroundTask, Message, Routine, RoutineRun } from '@shared/types'
 import { runAgent } from '../agent/loop'
 import { PermissionManager } from '../agent/permission'
 import { resolveProvider } from '../providers/registry'
@@ -20,6 +29,54 @@ const MAX_TASKS = 100 // 任务列表只留最近 N 条，防止长时间运行�
 const running = new Set<string>() // 正在运行的 routineId，防止重叠
 const taskAborters = new Map<string, AbortController>() // 按任务 id 可中止
 const RUN_CAP_MS = 30 * 60_000 // 单次例程运行的墙钟上限，防失控
+const watchers = new Map<string, FSWatcher>() // fileChange 例程的文件监听器
+const watchDebounce = new Map<string, ReturnType<typeof setTimeout>>()
+let sched: { emitAgent: EmitAgent; emitTasks: EmitTasks } | null = null // 调度器回调（供 watcher 触发）
+
+/** 到点判定：interval 用间隔；daily/weekly 用时刻（含"错过补跑"）；fileChange 由监听器触发不走轮询 */
+function isDue(r: Routine, now: number): boolean {
+  const kind = r.scheduleKind ?? 'interval'
+  if (kind === 'fileChange') return false
+  if (kind === 'interval') return now >= (r.lastRunAt ?? 0) + r.intervalMinutes * 60_000
+  const [h, m] = (r.atTime ?? '09:00').split(':').map(Number)
+  const d = new Date(now)
+  if (kind === 'weekly' && d.getDay() !== (r.weekday ?? 1)) return false
+  const scheduled = new Date(d.getFullYear(), d.getMonth(), d.getDate(), h || 0, m || 0).getTime()
+  // 到点后、且本"计划时刻"尚未跑过 → 触发（关机错过的下次启动会补跑一次）
+  return now >= scheduled && (r.lastRunAt ?? 0) < scheduled
+}
+
+/** 重建 fileChange 例程的文件监听器（save/delete/启动时调用） */
+function refreshWatchers(): void {
+  if (!sched) return
+  for (const [id, w] of watchers) {
+    if (routines[id]?.scheduleKind !== 'fileChange' || !routines[id]?.enabled) {
+      w.close()
+      watchers.delete(id)
+    }
+  }
+  for (const r of Object.values(routines)) {
+    if (r.scheduleKind !== 'fileChange' || !r.enabled || watchers.has(r.id)) continue
+    const base = r.workspaceDir || store.getSettings().workspaceDir
+    const dir = path.isAbsolute(r.watchDir ?? '') ? r.watchDir! : path.join(base, r.watchDir ?? '.')
+    try {
+      const w = watch(dir, { recursive: true }, () => {
+        // 去抖 2s：一批写入只触发一次
+        clearTimeout(watchDebounce.get(r.id))
+        watchDebounce.set(
+          r.id,
+          setTimeout(() => {
+            if (sched && !running.has(r.id))
+              void routineManager.run(r.id, sched.emitAgent, sched.emitTasks)
+          }, 2000)
+        )
+      })
+      watchers.set(r.id, w)
+    } catch {
+      /* 目录不存在等：忽略，用户修好路径后再存一次即可 */
+    }
+  }
+}
 
 function ensure(): void {
   if (loaded) return
@@ -66,12 +123,15 @@ export const routineManager = {
     }
     routines[next.id] = next
     persist()
+    refreshWatchers()
     return next
   },
 
   delete(id: string): void {
     ensure()
     delete routines[id]
+    watchers.get(id)?.close()
+    watchers.delete(id)
     persist()
   },
 
@@ -130,24 +190,33 @@ export const routineManager = {
     taskAborters.set(task.id, ac)
     const capTimer = setTimeout(() => ac.abort(), RUN_CAP_MS)
 
+    const startedAt = task.startedAt
     try {
-      await runAgent({
-        conversationId: conv.id,
-        userContent: r.prompt,
-        provider,
-        permission,
-        signal: ac.signal,
-        send: (event) => emitAgent(conv.id, event)
-      })
-      if (ac.signal.aborted) {
-        task.status = 'error'
-        task.error = '已停止（手动取消或超过 30 分钟上限）'
-      } else {
-        task.status = 'done'
+      // 失败自动重试：最多 1 + retries 次
+      const maxAttempts = 1 + Math.max(0, r.retries ?? 0)
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          await runAgent({
+            conversationId: conv.id,
+            userContent: attempt === 1 ? r.prompt : `（自动重试 第 ${attempt} 次）\n${r.prompt}`,
+            provider,
+            permission,
+            signal: ac.signal,
+            send: (event) => emitAgent(conv.id, event)
+          })
+          if (ac.signal.aborted) {
+            task.status = 'error'
+            task.error = '已停止（手动取消或超过 30 分钟上限）'
+          } else {
+            task.status = 'done'
+            task.error = undefined
+          }
+        } catch (e) {
+          task.status = 'error'
+          task.error = e instanceof Error ? e.message : String(e)
+        }
+        if (task.status === 'done' || ac.signal.aborted || attempt >= maxAttempts) break
       }
-    } catch (e) {
-      task.status = 'error'
-      task.error = e instanceof Error ? e.message : String(e)
     } finally {
       clearTimeout(capTimer)
       taskAborters.delete(task.id)
@@ -173,21 +242,58 @@ export const routineManager = {
       running.delete(id)
       emitTasks(tasks)
       notify(task)
+
+      // 运行历史：每个例程存最近 10 次
+      const run: RoutineRun = {
+        at: startedAt,
+        status: task.status === 'done' ? 'done' : 'error',
+        error: task.error,
+        conversationId: conv.id,
+        durationMs: (task.endedAt ?? Date.now()) - startedAt
+      }
+      r.history = [run, ...(r.history ?? [])].slice(0, 10)
+      persist()
+
+      // 结果落地：把最后一条助手消息摘要写入 <ws>/.hemilier/routine-reports/
+      if (r.reportToFile && task.status === 'done') {
+        void writeReport(baseWs, r.name, conv).catch(() => {})
+      }
     }
   },
 
-  /** 启动调度器：每 30 秒检查一次到点的例程 */
+  /** 启动调度器：每 30 秒检查一次到点的例程（interval/daily/weekly）+ 建立文件监听 */
   startScheduler(emitAgent: EmitAgent, emitTasks: EmitTasks): void {
     ensure()
+    sched = { emitAgent, emitTasks }
+    refreshWatchers()
     setInterval(() => {
       const now = Date.now()
       for (const r of Object.values(routines)) {
         if (!r.enabled || running.has(r.id)) continue
-        const due = (r.lastRunAt ?? 0) + r.intervalMinutes * 60_000
-        if (now >= due) void this.run(r.id, emitAgent, emitTasks)
+        if (isDue(r, now)) void this.run(r.id, emitAgent, emitTasks)
       }
     }, 30_000)
   }
+}
+
+/** 把本次运行的结果（最后一条助手消息）写成报告文件，便于无人值守时查阅 */
+async function writeReport(
+  workspace: string,
+  name: string,
+  conv: { messages: Message[] }
+): Promise<void> {
+  const last = [...conv.messages].reverse().find((m) => m.role === 'assistant' && m.content)
+  if (!last) return
+  const dir = path.join(workspace, '.hemilier', 'routine-reports')
+  await fsp.mkdir(dir, { recursive: true })
+  const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+  const safeName = name.replace(/[\\/:*?"<>|]/g, '_').slice(0, 40)
+  const file = path.join(dir, `${safeName}-${ts}.md`)
+  await fsp.writeFile(
+    file,
+    `# ${name}\n\n运行时间：${new Date().toLocaleString()}\n\n---\n\n${last.content}\n`,
+    'utf8'
+  )
 }
 
 function notify(task: BackgroundTask): void {

@@ -1029,6 +1029,9 @@ export function ChatView(): JSX.Element {
   const contentRef = useRef<HTMLDivElement>(null)
   // 是否「贴在底部」：贴底时才跟随输出向下滚；用户往上翻则停止跟随，方便阅读历史
   const stickRef = useRef(true)
+  // 已处理过的"最后一条 user 消息"id：只有真的新发一条时才强制回底，
+  // 避免流式期间（助手消息尚未落库、末条恰为 user）每个 token 都把用户拽回底部
+  const lastUserIdRef = useRef<string | null>(null)
   const [showJump, setShowJump] = useState(false)
 
   const lastAssistantId = useMemo(() => {
@@ -1068,7 +1071,11 @@ export function ChatView(): JSX.Element {
     const el = scrollRef.current
     if (!el) return
     const msgs = active?.messages ?? []
-    if (msgs[msgs.length - 1]?.role === 'user') {
+    const last = msgs[msgs.length - 1]
+    // 仅当"新发出一条 user 消息"（id 变化）时才强制回底并恢复跟随；
+    // 流式期间末条恰为同一条 user 消息，不再每 token 重置，允许上滑查阅历史
+    if (last?.role === 'user' && last.id !== lastUserIdRef.current) {
+      lastUserIdRef.current = last.id
       stickRef.current = true
       setShowJump(false)
     }

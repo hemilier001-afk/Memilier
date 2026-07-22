@@ -57,14 +57,23 @@ export interface Project {
   createdAt: number
 }
 
-/** 例程：按固定间隔自动触发的后台任务 */
+/** 例程的一次运行记录（运行历史） */
+export interface RoutineRun {
+  at: number
+  status: 'done' | 'error'
+  error?: string
+  conversationId: string
+  durationMs: number
+}
+
+/** 例程：自动触发的后台任务（定时间隔 / 每天 / 每周 / 文件变化） */
 export interface Routine {
   id: string
   name: string
   kind: ConversationKind
   /** 触发时发送给智能体的指令 */
   prompt: string
-  /** 每隔多少分钟运行一次 */
+  /** 每隔多少分钟运行一次（scheduleKind='interval' 时用） */
   intervalMinutes: number
   enabled: boolean
   /** 运行所用的工作区与模型；留空则用全局默认 */
@@ -72,6 +81,20 @@ export interface Routine {
   model?: string
   createdAt: number
   lastRunAt?: number
+  /** 触发方式；缺省=interval（沿用 intervalMinutes） */
+  scheduleKind?: 'interval' | 'daily' | 'weekly' | 'fileChange'
+  /** daily/weekly：触发时刻 "HH:MM"（24h） */
+  atTime?: string
+  /** weekly：星期几 0=周日 … 6=周六 */
+  weekday?: number
+  /** fileChange：监听的目录（相对工作区或绝对；变化即去抖触发） */
+  watchDir?: string
+  /** 失败自动重试次数（默认 0） */
+  retries?: number
+  /** 把每次运行的结果摘要写入 <ws>/.hemilier/routine-reports/ */
+  reportToFile?: boolean
+  /** 最近运行历史（最多 10 条） */
+  history?: RoutineRun[]
 }
 
 /** 一条带治理元数据的项目记忆 */
@@ -179,6 +202,11 @@ export interface Settings {
   maxTokens?: number
   /** 网络代理地址，如 http://127.0.0.1:7890（空=跟随系统代理）。作用于所有云端/本地 API 请求 */
   proxyUrl?: string
+  /** 已信任的 MCP server 签名（name::config）。未信任的 server 不会自动连接/执行（防供应链） */
+  trustedMcp?: string[]
+  /** 启用生命周期钩子：.hemilier/hooks.json 里的 shell 命令会在工具执行前后/运行结束时触发。
+   *  默认关闭（防止克隆来的不可信仓库里的 hooks 被自动执行）。 */
+  enableHooks?: boolean
 }
 
 export interface ModelInfo {
@@ -209,6 +237,18 @@ export interface GitStatus {
   isRepo: boolean
   branch: string
   files: GitFile[]
+}
+
+/** MCP 连接器目录条目（内置精选，一键接入） */
+export interface McpConnectorInfo {
+  id: string
+  name: string
+  icon: string
+  category: string
+  description: string
+  envFields?: { key: string; label: string; required: boolean; secret?: boolean }[]
+  argFields?: { label: string; placeholder: string; required: boolean }[]
+  installed: boolean
 }
 
 /** 提供给设置界面展示的子 agent（多 agent 编排）信息 */
@@ -387,7 +427,33 @@ export interface Api {
   /** 卸载插件 */
   uninstallPlugin(id: string): Promise<void>
   /** 探测各 MCP server 的连通性 */
-  mcpStatus(): Promise<{ name: string; ok: boolean; toolCount: number; error?: string }[]>
+  mcpStatus(): Promise<
+    {
+      name: string
+      ok: boolean
+      toolCount: number
+      error?: string
+      untrusted?: boolean
+      source?: 'user' | 'plugin'
+    }[]
+  >
+  /** 信任并启用一个 MCP server（把其签名加入 trustedMcp） */
+  trustMcp(name: string): Promise<void>
+  /** MCP 连接器目录（内置精选） */
+  mcpCatalog(): Promise<McpConnectorInfo[]>
+  /** 一键接入一个目录连接器（自动写配置 + 授信） */
+  mcpConnect(
+    id: string,
+    input: { env?: Record<string, string>; extraArgs?: string[] }
+  ): Promise<{ ok: boolean; error?: string }>
+  /** 启停某个用户配置的 MCP server */
+  mcpSetEnabled(name: string, enabled: boolean): Promise<void>
+  /** 删除某个用户配置的 MCP server（连带移除信任） */
+  mcpRemove(name: string): Promise<void>
+  /** 从剪贴板文本导入标准 mcpServers JSON 片段（导入后仍需显式信任） */
+  mcpImport(text: string): Promise<{ ok: boolean; added?: number; error?: string }>
+  /** 读取系统剪贴板文本（主进程代理，绕过渲染端权限限制） */
+  readClipboardText(): Promise<string>
   runTerminal(conversationId: string, workspaceDir: string, command: string): Promise<void>
   killTerminal(conversationId: string): Promise<void>
   listRoutines(): Promise<Routine[]>

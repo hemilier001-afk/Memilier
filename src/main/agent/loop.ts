@@ -4,7 +4,7 @@ import path from 'node:path'
 import type { AgentEvent, Message, Settings, ToolCall } from '@shared/types'
 import type { ModelProvider } from '../providers/types'
 import { imageStore } from '../images'
-import { mcpManager } from '../mcp/manager'
+import { mcpManager, mcpSignature } from '../mcp/manager'
 import { memory as memoryStore } from '../memory'
 import { pluginManager } from '../plugins/manager'
 import { bareModel, resolveProvider } from '../providers/registry'
@@ -21,6 +21,7 @@ import {
   type ToolContext
 } from './tools'
 import { agentManager } from './agents/manager'
+import { makeHookRunner } from './hooks'
 
 const MAX_ITERATIONS = 25
 // 发送给模型的历史预算（按字符粗估，约对应 1.6 万 token）；超出则丢弃较早消息
@@ -201,10 +202,50 @@ function zhZodIssue(issue: {
 }
 
 // 共享的单个工具执行（不发 UI 事件；供子 agent 循环复用）。会 mutate tc.status/result/error。
+// 工作区级 allow/deny 权限规则（.hemilier/permissions.json）：
+// { "allow": ["run_command:npm *", "read_file"], "deny": ["run_command:rm *"] }
+// deny 优先于 allow；命中 allow 则自动放行（危险命令 forcePrompt 仍强制确认）。
+interface PermRules {
+  allow: string[]
+  deny: string[]
+}
+async function loadPermissionRules(workspace: string): Promise<PermRules> {
+  try {
+    const raw = await fs.readFile(path.join(workspace, '.hemilier', 'permissions.json'), 'utf8')
+    const j = JSON.parse(raw) as { allow?: unknown; deny?: unknown }
+    const norm = (a: unknown): string[] =>
+      Array.isArray(a) ? a.filter((x): x is string => typeof x === 'string') : []
+    return { allow: norm(j.allow), deny: norm(j.deny) }
+  } catch {
+    return { allow: [], deny: [] }
+  }
+}
+function ruleDecision(
+  rules: PermRules,
+  toolName: string,
+  args: Record<string, unknown>
+): 'allow' | 'deny' | undefined {
+  const cands = [toolName]
+  if (toolName === 'run_command') cands.push(`run_command:${String(args.command ?? '').trim()}`)
+  const hit = (patterns: string[]): boolean =>
+    patterns.some((p) =>
+      cands.some((c) => (p.endsWith('*') ? c.startsWith(p.slice(0, -1)) : c === p))
+    )
+  if (hit(rules.deny)) return 'deny'
+  if (hit(rules.allow)) return 'allow'
+  return undefined
+}
+
 async function executeToolCall(
   tc: ToolCall,
   ctx: ToolContext,
-  o: { permission: PermissionManager; signal: AbortSignal; settings: Settings; allowMcp: boolean }
+  o: {
+    permission: PermissionManager
+    signal: AbortSignal
+    settings: Settings
+    allowMcp: boolean
+    rules?: PermRules
+  }
 ): Promise<string> {
   if (typeof tc.args === 'string') {
     try {
@@ -241,7 +282,17 @@ async function executeToolCall(
     !isMcp &&
     tool!.name === 'run_command' &&
     isDangerousCommand(String((dialogArgs as { command?: string })?.command ?? ''))
-  const approved = await o.permission.request(tc, sideEffect, description, forcePrompt, o.signal)
+  // 工作区权限规则：deny 直接拒绝；allow 且非危险命令则免确认放行
+  const decision = o.rules ? ruleDecision(o.rules, tc.name, dialogArgs) : undefined
+  if (decision === 'deny') {
+    tc.status = 'denied'
+    tc.error = '被工作区权限规则（deny）拒绝'
+    return '该操作被 .hemilier/permissions.json 的 deny 规则拒绝。'
+  }
+  const approved =
+    decision === 'allow' && !forcePrompt
+      ? true
+      : await o.permission.request(tc, sideEffect, description, forcePrompt, o.signal)
   if (!approved) {
     tc.status = 'denied'
     tc.error = '用户拒绝执行'
@@ -322,6 +373,7 @@ export async function runSubAgent(opts: {
   if (!model) return '（尚未选择模型，无法派生子 agent。）'
 
   const toolDefs = listToolDefsFor(def?.tools)
+  const subRules = await loadPermissionRules(workspace)
   const osName =
     process.platform === 'win32' ? 'Windows' : process.platform === 'darwin' ? 'macOS' : 'Linux'
   const shellHint =
@@ -382,7 +434,13 @@ export async function runSubAgent(opts: {
     if (!toolCalls.length) break
     for (const tc of toolCalls) {
       if (signal.aborted) break
-      const r = await executeToolCall(tc, ctx, { permission, signal, settings, allowMcp: false })
+      const r = await executeToolCall(tc, ctx, {
+        permission,
+        signal,
+        settings,
+        allowMcp: false,
+        rules: subRules
+      })
       trace.push(tc.status === 'error' || tc.status === 'denied' ? `${tc.name}✗` : tc.name)
       emit('')
       messages.push({
@@ -469,13 +527,16 @@ export async function runAgent(opts: RunOptions): Promise<void> {
     chat: '\n\n【对话模式】仅进行对话，不调用任何工具。'
   }
 
-  const [skills, wsListing, memory, projectInstructions, agentDefs] = await Promise.all([
+  const [skills, wsListing, memory, projectInstructions, agentDefs, permRules] = await Promise.all([
     skillManager.listSkills(workspace, pluginSkillDirs),
     listWorkspaceTop(workspace),
     memoryStore.renderForPrompt(workspace),
     loadProjectInstructions(workspace),
-    agentManager.list(workspace)
+    agentManager.list(workspace),
+    loadPermissionRules(workspace)
   ])
+  // 生命周期钩子（仅 settings.enableHooks 时启用；子 agent 不触发，避免格式化风暴）
+  const hooks = await makeHookRunner({ workspace, enabled: settings.enableHooks ?? false })
   // 可派生的子 agent 清单（仅 auto 模式注入；plan/chat 不派生）
   const agentsSection =
     mode === 'auto' && agentDefs.length
@@ -547,7 +608,13 @@ export async function runAgent(opts: RunOptions): Promise<void> {
   // 按模式决定可用工具：auto 全开 + MCP；plan 仅只读工具；chat 不给工具
   let toolDefs: import('@shared/types').ToolDef[] = []
   if (mode === 'auto') {
-    const mcpDefs = await mcpManager.listToolDefs({ ...pluginMcpServers, ...settings.mcpServers })
+    const mergedMcp = { ...pluginMcpServers, ...settings.mcpServers }
+    const trusted = new Set(settings.trustedMcp ?? [])
+    // 信任门：未信任的 MCP server 一律不连接（stdio server 连接即执行本地命令，防供应链）
+    const trustedMcp = Object.fromEntries(
+      Object.entries(mergedMcp).filter(([name, cfg]) => trusted.has(mcpSignature(name, cfg)))
+    )
+    const mcpDefs = await mcpManager.listToolDefs(trustedMcp)
     toolDefs = [...listToolDefs(), ...mcpDefs]
   } else if (mode === 'plan') {
     toolDefs = listToolDefs(true).filter((t) => t.name !== 'spawn_agent')
@@ -644,11 +711,30 @@ export async function runAgent(opts: RunOptions): Promise<void> {
           !isMcp &&
           tool!.name === 'run_command' &&
           isDangerousCommand(String((dialogArgs as { command?: string })?.command ?? ''))
-        const approved = await permission.request(tc, sideEffect, description, forcePrompt, signal)
+        // 工作区权限规则：deny 直接拒绝；allow 且非危险命令免确认放行
+        const decision = ruleDecision(permRules, tc.name, dialogArgs)
+        if (decision === 'deny') {
+          tc.status = 'denied'
+          tc.error = '被工作区权限规则（deny）拒绝'
+          resultTexts.set(tc.id, '该操作被 .hemilier/permissions.json 的 deny 规则拒绝。')
+          return
+        }
+        const approved =
+          decision === 'allow' && !forcePrompt
+            ? true
+            : await permission.request(tc, sideEffect, description, forcePrompt, signal)
         if (!approved) {
           tc.status = 'denied'
           tc.error = '用户拒绝执行'
           resultTexts.set(tc.id, '用户拒绝了该操作。')
+          return
+        }
+        // PreToolUse 钩子：非零退出即拦截该工具（安全闸 / 策略校验）
+        const pre = await hooks.preTool(tc.name, dialogArgs)
+        if (pre.block) {
+          tc.status = 'denied'
+          tc.error = `被 PreToolUse 钩子拦截：${pre.reason ?? ''}`
+          resultTexts.set(tc.id, tc.error)
           return
         }
         tc.status = 'running'
@@ -678,6 +764,8 @@ export async function runAgent(opts: RunOptions): Promise<void> {
           tc.status = 'done'
           tc.result = r
           resultTexts.set(tc.id, r)
+          // PostToolUse 钩子：工具成功后触发（如改完文件自动 format / 跑测试）
+          await hooks.postTool(tc.name, dialogArgs)
         } catch (e) {
           tc.status = 'error'
           tc.error = e instanceof Error ? e.message : String(e)
@@ -755,5 +843,8 @@ export async function runAgent(opts: RunOptions): Promise<void> {
       return
     }
     send({ type: 'error', error: e instanceof Error ? e.message : String(e) })
+  } finally {
+    // Stop 钩子：运行结束（正常/中断/出错）都触发一次
+    void hooks.stop()
   }
 }

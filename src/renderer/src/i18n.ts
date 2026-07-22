@@ -118,6 +118,34 @@ const DICT: Dict = {
   scrollToBottom: { zh: '↓ 回到底部', en: '↓ Jump to latest' },
   testConnection: { zh: '测试连接', en: 'Test' },
   mcpTesting: { zh: '测试中…', en: 'Testing…' },
+  mcpNeedsTrust: { zh: '需信任后才连接', en: 'needs trust to connect' },
+  mcpCatalogTitle: { zh: '连接器目录', en: 'Connector directory' },
+  mcpCatalogHint: {
+    zh: '一键接入主流 MCP 能力（需本机已装 Node.js/npx，首次调用会自动下载）。目录接入自动信任。',
+    en: 'One-click popular MCP servers (requires Node.js/npx; downloads on first use). Directory installs are auto-trusted.'
+  },
+  mcpConnect: { zh: '接入', en: 'Connect' },
+  mcpConnected: { zh: '已接入', en: 'Connected' },
+  mcpImport: { zh: '从剪贴板导入', en: 'Import from clipboard' },
+  mcpImportTip: {
+    zh: '粘贴板里放一段标准 mcpServers JSON（Claude Desktop / Cursor 格式均可），导入后需逐个信任',
+    en: 'Copy a standard mcpServers JSON (Claude Desktop / Cursor format), then import; each server still needs trusting'
+  },
+  mcpImported: {
+    zh: '已导入 {n} 个 server（信任后生效）',
+    en: 'Imported {n} server(s) — trust to activate'
+  },
+  mcpAdvanced: { zh: '高级：手动编辑 JSON 配置', en: 'Advanced: edit JSON config' },
+  mcpFromPlugin: { zh: '插件', en: 'plugin' },
+  mcpNone: { zh: '（未配置 MCP server）', en: '(no MCP servers configured)' },
+  mcpTools: { zh: '工具×{n}', en: 'tools ×{n}' },
+  mcpDisabled: { zh: '已停用', en: 'disabled' },
+  mcpEnabledTip: {
+    zh: '启用/停用（停用后保留配置但不连接）',
+    en: 'Enable/disable (config kept, not connected)'
+  },
+  mcpRemoveConfirm: { zh: '删除 MCP server「{name}」？', en: 'Remove MCP server "{name}"?' },
+  mcpTrust: { zh: '信任并启用', en: 'Trust & enable' },
 
   // 设置 - 技能/插件
   skillsTitle: { zh: '技能（Skills）', en: 'Skills' },
@@ -298,6 +326,39 @@ const DICT: Dict = {
   routineEveryMin: { zh: '每 {n} 分钟', en: 'Every {n} min' },
   routineRunNowTip: { zh: '立即运行一次', en: 'Run once now' },
   routineRunNow: { zh: '▶运行', en: '▶Run' },
+  routineTrigger: { zh: '触发方式', en: 'Trigger' },
+  trigInterval: { zh: '固定间隔', en: 'Interval' },
+  trigDaily: { zh: '每天', en: 'Daily' },
+  trigWeekly: { zh: '每周', en: 'Weekly' },
+  trigFileChange: { zh: '文件变化', en: 'File change' },
+  routineAtTime: { zh: '时刻', en: 'At time' },
+  routineWeekday: { zh: '星期', en: 'Weekday' },
+  routineWatchDir: { zh: '监听目录', en: 'Watch folder' },
+  routineRetries: { zh: '失败重试', en: 'Retries' },
+  routineReportToFile: {
+    zh: '结果写入报告文件（.hemilier/routine-reports/）',
+    en: 'Write result to a report file (.hemilier/routine-reports/)'
+  },
+  routineLastRun: { zh: '上次运行', en: 'Last run' },
+  routineTemplates: { zh: '自动化模板（点击填入）', en: 'Templates (click to fill)' },
+  tplErrorSummary: { zh: '每日错误汇总', en: 'Daily error digest' },
+  tplDepCheck: { zh: '依赖更新检查', en: 'Dependency update check' },
+  tplFileTidy: { zh: '新文件自动整理', en: 'Auto-tidy new files' },
+  wdSun: { zh: '周日', en: 'Sun' },
+  wdMon: { zh: '周一', en: 'Mon' },
+  wdTue: { zh: '周二', en: 'Tue' },
+  wdWed: { zh: '周三', en: 'Wed' },
+  wdThu: { zh: '周四', en: 'Thu' },
+  wdFri: { zh: '周五', en: 'Fri' },
+  wdSat: { zh: '周六', en: 'Sat' },
+  hooksLabel: {
+    zh: '启用生命周期钩子（.hemilier/hooks.json）',
+    en: 'Enable lifecycle hooks (.hemilier/hooks.json)'
+  },
+  hooksHint: {
+    zh: '开启后，工作区 .hemilier/hooks.json 里的 shell 命令会在工具执行前后 / 运行结束时自动触发（如改完文件自动格式化、危险工具拦截）。默认关，避免克隆来的不可信仓库里的钩子被自动执行。',
+    en: 'When on, shell commands in the workspace .hemilier/hooks.json run automatically before/after tools and on stop (e.g. auto-format after edits, block risky tools). Off by default so hooks from cloned repos don’t auto-run.'
+  },
 
   // 自定义指令弹窗
   customizeTitle: { zh: '自定义', en: 'Customize' },

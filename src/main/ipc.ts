@@ -54,7 +54,8 @@ function parseGitStatus(out: string): { branch: string; files: GitFile[] } {
 import { runAgent } from './agent/loop'
 import { PermissionManager } from './agent/permission'
 import { imageStore } from './images'
-import { mcpManager } from './mcp/manager'
+import { mcpManager, mcpSignature } from './mcp/manager'
+import { MCP_CATALOG } from './mcp/catalog'
 import { pluginManager } from './plugins/manager'
 import { skillManager } from './skills/manager'
 import { agentManager } from './agent/agents/manager'
@@ -522,10 +523,124 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   )
 
   // MCP 连接状态探测（用户配置 + 启用插件提供的 server）
-  ipcMain.handle('mcp:status', () => {
+  ipcMain.handle('mcp:status', async () => {
     const s = store.getSettings()
     const pluginMcp = pluginManager.mcpServers(pluginManager.activePlugins())
-    return mcpManager.status({ ...pluginMcp, ...s.mcpServers })
+    const merged = { ...pluginMcp, ...s.mcpServers }
+    const trusted = new Set(s.trustedMcp ?? [])
+    const trustedServers: Record<string, (typeof merged)[string]> = {}
+    const untrusted: { name: string; ok: false; toolCount: 0; error: string; untrusted: true }[] =
+      []
+    for (const [name, cfg] of Object.entries(merged)) {
+      if (trusted.has(mcpSignature(name, cfg))) trustedServers[name] = cfg
+      else
+        untrusted.push({
+          name,
+          ok: false,
+          toolCount: 0,
+          error: '需要信任后才连接',
+          untrusted: true
+        })
+    }
+    // 只探活已信任的（未信任的绝不连接/执行）
+    const statuses = await mcpManager.status(trustedServers)
+    // 标注来源：user=设置里配置的（可启停/删除），plugin=插件提供的（在插件页管理）
+    const sourceOf = (name: string): 'user' | 'plugin' =>
+      s.mcpServers && name in s.mcpServers ? 'user' : 'plugin'
+    return [...statuses, ...untrusted].map((st) => ({ ...st, source: sourceOf(st.name) }))
+  })
+  ipcMain.handle('clipboard:read', () => clipboard.readText())
+  ipcMain.handle('mcp:catalog', () => {
+    const installed = new Set(Object.keys(store.getSettings().mcpServers ?? {}))
+    return MCP_CATALOG.map(({ command: _c, args: _a, ...pub }) => ({
+      ...pub,
+      installed: installed.has(pub.id)
+    }))
+  })
+  ipcMain.handle(
+    'mcp:connect',
+    (_e, id: string, input: { env?: Record<string, string>; extraArgs?: string[] }) => {
+      const def = MCP_CATALOG.find((c) => c.id === id)
+      if (!def) return { ok: false, error: '未知连接器' }
+      // 必填校验
+      for (const f of def.envFields ?? []) {
+        if (f.required && !input.env?.[f.key]?.trim())
+          return { ok: false, error: `缺少 ${f.label}` }
+      }
+      if ((def.argFields ?? []).some((f, i) => f.required && !input.extraArgs?.[i]?.trim())) {
+        return { ok: false, error: '缺少必填参数' }
+      }
+      const s = store.getSettings()
+      const cfg = {
+        command: def.command,
+        args: [...def.args, ...(input.extraArgs ?? []).filter(Boolean)],
+        ...(input.env && Object.keys(input.env).length ? { env: input.env } : {})
+      }
+      const servers = { ...(s.mcpServers ?? {}), [def.id]: cfg }
+      // 内置目录接入 = 用户亲手操作的可信来源 → 自动授信
+      const sig = mcpSignature(def.id, cfg)
+      const trusted = s.trustedMcp ?? []
+      store.setSettings({
+        mcpServers: servers,
+        trustedMcp: trusted.includes(sig) ? trusted : [...trusted, sig]
+      })
+      return { ok: true }
+    }
+  )
+  ipcMain.handle('mcp:setEnabled', (_e, name: string, enabled: boolean) => {
+    const s = store.getSettings()
+    const cfg = s.mcpServers?.[name]
+    if (!cfg) return
+    store.setSettings({ mcpServers: { ...s.mcpServers, [name]: { ...cfg, enabled } } })
+  })
+  ipcMain.handle('mcp:remove', (_e, name: string) => {
+    const s = store.getSettings()
+    if (!s.mcpServers?.[name]) return
+    const sig = mcpSignature(name, s.mcpServers[name])
+    const servers = { ...s.mcpServers }
+    delete servers[name]
+    store.setSettings({
+      mcpServers: servers,
+      trustedMcp: (s.trustedMcp ?? []).filter((x) => x !== sig)
+    })
+  })
+  ipcMain.handle('mcp:import', (_e, text: string) => {
+    try {
+      const parsed = JSON.parse(text) as Record<string, unknown>
+      // 兼容 { mcpServers: {...} }（Claude Desktop/Cursor 格式）与裸 {...} 两种
+      const src = (
+        parsed && typeof parsed === 'object' && 'mcpServers' in parsed
+          ? (parsed as { mcpServers: unknown }).mcpServers
+          : parsed
+      ) as Record<string, { command?: unknown; url?: unknown }>
+      if (!src || typeof src !== 'object' || Array.isArray(src)) {
+        return { ok: false, error: '不是有效的 mcpServers JSON' }
+      }
+      const s = store.getSettings()
+      const servers = { ...(s.mcpServers ?? {}) }
+      let added = 0
+      for (const [name, cfg] of Object.entries(src)) {
+        if (!cfg || typeof cfg !== 'object') continue
+        if (typeof cfg.command !== 'string' && typeof cfg.url !== 'string') continue
+        servers[name] = cfg as (typeof servers)[string]
+        added++
+      }
+      if (!added) return { ok: false, error: '未找到可导入的 server（需含 command 或 url）' }
+      // 导入来源是网上教程/剪贴板 → 不自动授信，须在列表里显式「信任并启用」
+      store.setSettings({ mcpServers: servers })
+      return { ok: true, added }
+    } catch {
+      return { ok: false, error: 'JSON 解析失败' }
+    }
+  })
+  ipcMain.handle('mcp:trust', (_e, name: string) => {
+    const s = store.getSettings()
+    const merged = { ...pluginManager.mcpServers(pluginManager.activePlugins()), ...s.mcpServers }
+    const cfg = merged[name]
+    if (!cfg) return
+    const sig = mcpSignature(name, cfg)
+    const list = s.trustedMcp ?? []
+    if (!list.includes(sig)) store.setSettings({ trustedMcp: [...list, sig] })
   })
 
   ipcMain.handle('agent:abort', (_e, id: string) => {

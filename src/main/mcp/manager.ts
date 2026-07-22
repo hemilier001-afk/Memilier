@@ -206,3 +206,8 @@ class McpManager {
 }
 
 export const mcpManager = new McpManager()
+
+/** 供信任门用的稳定签名（name + 配置）：配置变化即需重新信任 */
+export function mcpSignature(name: string, cfg: McpServerConfig): string {
+  return `${name}::${JSON.stringify([cfg.command, cfg.args ?? [], cfg.env ?? {}, cfg.url, cfg.type])}`
+}

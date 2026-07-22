@@ -179,6 +179,19 @@ function ensure(): void {
   conversations = loadConvDir()
   loaded = true
   migrateModelIds()
+  migrateTrustedMcp()
+}
+
+// 首次引入信任门：对老用户，把他们已手动配置的 mcpServers 直接授信（是本人添加的），
+// 避免升级后现有 MCP 突然失效；插件/新来源的 server 仍需显式信任。
+function migrateTrustedMcp(): void {
+  if (settings.trustedMcp !== undefined) return
+  const sigs = Object.entries(settings.mcpServers ?? {}).map(
+    ([name, cfg]) =>
+      `${name}::${JSON.stringify([cfg.command, cfg.args ?? [], cfg.env ?? {}, cfg.url, cfg.type])}`
+  )
+  settings.trustedMcp = sigs
+  writeJSON(settingsPath, withEncryptedKeys(settings))
 }
 
 // 旧版模型 id 是裸名（如 "qwen2.5"），统一加上 "ollama::" 前缀以适配多提供方路由

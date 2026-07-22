@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type {
   AgentInfo,
+  McpConnectorInfo,
   PluginCatalogItem,
   PluginInfo,
   ProviderConfig,
@@ -49,11 +50,25 @@ export function SettingsModal(): JSX.Element | null {
   const [plugins, setPlugins] = useState<PluginInfo[]>([])
   const [providers, setProviders] = useState<ProviderConfig[]>([])
   const [mcpStatus, setMcpStatus] = useState<
-    { name: string; ok: boolean; toolCount: number; error?: string }[] | null
+    | {
+        name: string
+        ok: boolean
+        toolCount: number
+        error?: string
+        untrusted?: boolean
+        source?: 'user' | 'plugin'
+      }[]
+    | null
   >(null)
   const [mcpTesting, setMcpTesting] = useState(false)
   const [pluginMsg, setPluginMsg] = useState<string | null>(null)
   const [catalog, setCatalog] = useState<PluginCatalogItem[]>([])
+  const [connectors, setConnectors] = useState<McpConnectorInfo[]>([])
+  const [connectForm, setConnectForm] = useState<string | null>(null)
+  const [connectEnv, setConnectEnv] = useState<Record<string, string>>({})
+  const [connectArgs, setConnectArgs] = useState<string[]>([])
+  const [connectMsg, setConnectMsg] = useState<string | null>(null)
+  const [importMsg, setImportMsg] = useState<string | null>(null)
 
   useEffect(() => {
     if (open) {
@@ -65,6 +80,7 @@ export function SettingsModal(): JSX.Element | null {
       void window.api.listAgents(useStore.getState().settings?.workspaceDir ?? '').then(setAgents)
       void window.api.listPlugins().then(setPlugins)
       void window.api.pluginCatalog().then(setCatalog)
+      void window.api.mcpCatalog().then(setConnectors)
     }
   }, [open])
 
@@ -116,6 +132,47 @@ export function SettingsModal(): JSX.Element | null {
     } finally {
       setMcpTesting(false)
     }
+  }
+
+  /** 接入/启停/删除/导入后统一刷新：设置、JSON 文本、目录 installed 标记、探活 */
+  const refreshMcpAll = async (): Promise<void> => {
+    const s = await window.api.getSettings()
+    useStore.setState({ settings: s })
+    setMcpText(JSON.stringify(s.mcpServers ?? {}, null, 2))
+    setConnectors(await window.api.mcpCatalog())
+    await testMcp()
+  }
+  const beginConnect = (c: McpConnectorInfo): void => {
+    // 无需填写任何字段的连接器：点了直接接入
+    if (!(c.envFields?.length || c.argFields?.length)) {
+      void window.api.mcpConnect(c.id, {}).then((r) => {
+        if (r.ok) void refreshMcpAll()
+      })
+      return
+    }
+    setConnectForm(c.id)
+    setConnectEnv({})
+    setConnectArgs([])
+    setConnectMsg(null)
+  }
+  const doConnect = async (c: McpConnectorInfo): Promise<void> => {
+    setConnectMsg(null)
+    const r = await window.api.mcpConnect(c.id, { env: connectEnv, extraArgs: connectArgs })
+    if (!r.ok) {
+      setConnectMsg(r.error ?? 'failed')
+      return
+    }
+    setConnectForm(null)
+    await refreshMcpAll()
+  }
+  const importFromClipboard = async (): Promise<void> => {
+    setImportMsg(null)
+    const text = await window.api.readClipboardText()
+    const r = await window.api.mcpImport(text)
+    setImportMsg(
+      r.ok ? `✓ ${t('mcpImported').replace('{n}', String(r.added ?? 0))}` : `✗ ${r.error}`
+    )
+    if (r.ok) await refreshMcpAll()
   }
 
   const installPlugin = async (): Promise<void> => {
@@ -367,6 +424,17 @@ export function SettingsModal(): JSX.Element | null {
                   {t('autoApprove')}
                 </label>
                 <div>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={settings.enableHooks ?? false}
+                      onChange={(e) => void update({ enableHooks: e.target.checked })}
+                    />
+                    {t('hooksLabel')}
+                  </label>
+                  <p className="mt-1 text-xs text-muted">{t('hooksHint')}</p>
+                </div>
+                <div>
                   <label className="mb-1 block font-medium">{t('submitKey')}</label>
                   <select
                     value={settings.submitKey ?? 'enter'}
@@ -520,64 +588,225 @@ export function SettingsModal(): JSX.Element | null {
             )}
 
             {cat === 'mcp' && (
-              <div>
-                <div className="mb-1 flex items-center justify-between">
-                  <label className="font-medium">{t('mcpTitle')}</label>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={testMcp}
-                      disabled={mcpTesting}
-                      className="rounded-md bg-surface-2 px-2 py-0.5 text-xs disabled:opacity-50"
-                    >
-                      {mcpTesting ? t('mcpTesting') : t('testConnection')}
-                    </button>
-                    <button
-                      onClick={saveMcp}
-                      className="rounded-md bg-surface-2 px-2 py-0.5 text-xs"
-                    >
-                      {t('save')}
-                    </button>
+              <div className="space-y-5">
+                {/* ① 连接器目录：一键接入 */}
+                <div>
+                  <label className="mb-0.5 block font-medium">{t('mcpCatalogTitle')}</label>
+                  <p className="mb-2 text-xs text-muted">{t('mcpCatalogHint')}</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {connectors.map((c) => (
+                      <div
+                        key={c.id}
+                        className="flex flex-col rounded-lg border border-line bg-surface-2 p-2.5"
+                      >
+                        <div className="flex items-start gap-2">
+                          <span className="text-lg leading-none">{c.icon}</span>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1.5">
+                              <span className="truncate text-sm font-medium">{c.name}</span>
+                              <span className="rounded bg-surface px-1 text-[10px] text-muted">
+                                {c.category}
+                              </span>
+                            </div>
+                            <p className="mt-0.5 text-xs leading-snug text-muted">
+                              {c.description}
+                            </p>
+                          </div>
+                        </div>
+                        {connectForm === c.id ? (
+                          <div className="mt-2 space-y-1.5">
+                            {(c.argFields ?? []).map((f, i) => (
+                              <input
+                                key={f.label}
+                                value={connectArgs[i] ?? ''}
+                                onChange={(e) => {
+                                  const next = [...connectArgs]
+                                  next[i] = e.target.value
+                                  setConnectArgs(next)
+                                }}
+                                placeholder={`${f.label}${f.required ? ' *' : ''}（${f.placeholder}）`}
+                                className="w-full rounded-md border border-line bg-transparent px-2 py-1 text-xs"
+                              />
+                            ))}
+                            {(c.envFields ?? []).map((f) => (
+                              <input
+                                key={f.key}
+                                type={f.secret ? 'password' : 'text'}
+                                value={connectEnv[f.key] ?? ''}
+                                onChange={(e) =>
+                                  setConnectEnv({ ...connectEnv, [f.key]: e.target.value })
+                                }
+                                placeholder={`${f.label}${f.required ? ' *' : ''}`}
+                                className="w-full rounded-md border border-line bg-transparent px-2 py-1 text-xs"
+                              />
+                            ))}
+                            {connectMsg && <p className="text-xs text-red-500">{connectMsg}</p>}
+                            <div className="flex justify-end gap-1.5">
+                              <button
+                                onClick={() => setConnectForm(null)}
+                                className="rounded px-2 py-0.5 text-xs text-muted hover:text-fg"
+                              >
+                                {t('cancel')}
+                              </button>
+                              <button
+                                onClick={() => void doConnect(c)}
+                                className="rounded border border-line bg-surface px-2 py-0.5 text-xs text-fg hover:bg-accent-soft"
+                              >
+                                {t('mcpConnect')}
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => beginConnect(c)}
+                            disabled={c.installed}
+                            className="mt-2 self-end rounded border border-line bg-surface px-2.5 py-0.5 text-xs text-fg transition hover:bg-accent-soft disabled:cursor-default disabled:opacity-60 disabled:hover:bg-surface"
+                          >
+                            {c.installed ? `✓ ${t('mcpConnected')}` : t('mcpConnect')}
+                          </button>
+                        )}
+                      </div>
+                    ))}
                   </div>
                 </div>
-                {mcpStatus && (
-                  <ul className="mb-2 space-y-1">
-                    {mcpStatus.length === 0 ? (
-                      <li className="text-xs text-muted">（未配置 MCP server）</li>
+
+                {/* ② 已安装管理：状态/启停/信任/删除 */}
+                <div>
+                  <div className="mb-1 flex items-center justify-between">
+                    <label className="font-medium">{t('mcpTitle')}</label>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => void importFromClipboard()}
+                        className="rounded-md bg-surface-2 px-2 py-0.5 text-xs"
+                        title={t('mcpImportTip')}
+                      >
+                        {t('mcpImport')}
+                      </button>
+                      <button
+                        onClick={testMcp}
+                        disabled={mcpTesting}
+                        className="rounded-md bg-surface-2 px-2 py-0.5 text-xs disabled:opacity-50"
+                      >
+                        {mcpTesting ? t('mcpTesting') : t('testConnection')}
+                      </button>
+                    </div>
+                  </div>
+                  {importMsg && <p className="mb-1 text-xs text-muted">{importMsg}</p>}
+                  {mcpStatus && (
+                    <ul className="space-y-1">
+                      {mcpStatus.length === 0 ? (
+                        <li className="text-xs text-muted">{t('mcpNone')}</li>
+                      ) : (
+                        mcpStatus.map((m) => (
+                          <li
+                            key={m.name}
+                            className="flex items-center gap-1.5 rounded-md bg-surface-2 px-2 py-1 text-xs"
+                          >
+                            <span
+                              className={
+                                m.untrusted
+                                  ? 'text-amber-500'
+                                  : m.ok
+                                    ? 'text-green-500'
+                                    : settings?.mcpServers?.[m.name]?.enabled === false
+                                      ? 'text-muted'
+                                      : 'text-red-500'
+                              }
+                            >
+                              {m.untrusted ? '⚠' : m.ok ? '●' : '○'}
+                            </span>
+                            <span className="truncate font-mono">{m.name}</span>
+                            {m.source === 'plugin' && (
+                              <span className="rounded bg-surface px-1 text-[10px] text-muted">
+                                {t('mcpFromPlugin')}
+                              </span>
+                            )}
+                            {m.untrusted ? (
+                              <span className="text-amber-500">{t('mcpNeedsTrust')}</span>
+                            ) : m.ok ? (
+                              <span className="text-muted">
+                                {t('mcpTools').replace('{n}', String(m.toolCount))}
+                              </span>
+                            ) : settings?.mcpServers?.[m.name]?.enabled === false ? (
+                              <span className="text-muted">{t('mcpDisabled')}</span>
+                            ) : (
+                              <span className="truncate text-red-500">{m.error}</span>
+                            )}
+                            <span className="ml-auto flex shrink-0 items-center gap-1.5">
+                              {m.untrusted && (
+                                <button
+                                  onClick={() =>
+                                    void window.api.trustMcp(m.name).then(() => void testMcp())
+                                  }
+                                  className="rounded border border-line px-2 py-0.5 text-fg hover:bg-accent-soft"
+                                >
+                                  {t('mcpTrust')}
+                                </button>
+                              )}
+                              {m.source === 'user' && !m.untrusted && (
+                                <label
+                                  className="flex cursor-pointer items-center gap-1 text-muted"
+                                  title={t('mcpEnabledTip')}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={settings?.mcpServers?.[m.name]?.enabled !== false}
+                                    onChange={(e) =>
+                                      void window.api
+                                        .mcpSetEnabled(m.name, e.target.checked)
+                                        .then(() => void refreshMcpAll())
+                                    }
+                                  />
+                                </label>
+                              )}
+                              {m.source === 'user' && (
+                                <button
+                                  onClick={() => {
+                                    if (confirm(t('mcpRemoveConfirm').replace('{name}', m.name)))
+                                      void window.api
+                                        .mcpRemove(m.name)
+                                        .then(() => void refreshMcpAll())
+                                  }}
+                                  className="text-muted hover:text-red-500"
+                                  title={t('deleteChat')}
+                                >
+                                  ✕
+                                </button>
+                              )}
+                            </span>
+                          </li>
+                        ))
+                      )}
+                    </ul>
+                  )}
+                </div>
+
+                {/* ③ 高级：手动 JSON（折叠） */}
+                <details>
+                  <summary className="cursor-pointer text-xs text-muted hover:text-fg">
+                    {t('mcpAdvanced')}
+                  </summary>
+                  <div className="mt-2">
+                    <textarea
+                      value={mcpText}
+                      onChange={(e) => setMcpText(e.target.value)}
+                      onBlur={saveMcp}
+                      rows={10}
+                      spellCheck={false}
+                      className="w-full rounded-md border border-line bg-transparent p-2 font-mono text-xs"
+                    />
+                    {mcpError ? (
+                      <p className="mt-1 text-xs text-red-500">JSON: {mcpError}</p>
                     ) : (
-                      mcpStatus.map((m) => (
-                        <li key={m.name} className="rounded-md bg-surface-2 px-2 py-1 text-xs">
-                          <span className={m.ok ? 'text-green-500' : 'text-red-500'}>
-                            {m.ok ? '●' : '○'}
-                          </span>{' '}
-                          <span className="font-mono">{m.name}</span>{' '}
-                          {m.ok ? (
-                            <span className="text-muted">工具×{m.toolCount}</span>
-                          ) : (
-                            <span className="text-red-500">{m.error}</span>
-                          )}
-                        </li>
-                      ))
+                      <p className="mt-1 whitespace-pre-wrap break-all text-xs text-muted">
+                        {
+                          'stdio: { "fs": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "PATH"] } }\n'
+                        }
+                        {'http: { "remote": { "url": "https://example.com/mcp", "type": "http" } }'}
+                      </p>
                     )}
-                  </ul>
-                )}
-                <textarea
-                  value={mcpText}
-                  onChange={(e) => setMcpText(e.target.value)}
-                  onBlur={saveMcp}
-                  rows={12}
-                  spellCheck={false}
-                  className="w-full rounded-md border border-line bg-transparent p-2 font-mono text-xs"
-                />
-                {mcpError ? (
-                  <p className="mt-1 text-xs text-red-500">JSON: {mcpError}</p>
-                ) : (
-                  <p className="mt-1 whitespace-pre-wrap break-all text-xs text-muted">
-                    {
-                      'stdio: { "fs": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "PATH"] } }\n'
-                    }
-                    {'http: { "remote": { "url": "https://example.com/mcp", "type": "http" } }'}
-                  </p>
-                )}
+                  </div>
+                </details>
               </div>
             )}
 

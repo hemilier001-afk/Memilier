@@ -75,6 +75,13 @@ const api: Api = {
   installCatalogPlugin: (id) => ipcRenderer.invoke('plugins:installCatalog', id),
   uninstallPlugin: (id) => ipcRenderer.invoke('plugins:uninstall', id),
   mcpStatus: () => ipcRenderer.invoke('mcp:status'),
+  trustMcp: (name) => ipcRenderer.invoke('mcp:trust', name),
+  mcpCatalog: () => ipcRenderer.invoke('mcp:catalog'),
+  mcpConnect: (id, input) => ipcRenderer.invoke('mcp:connect', id, input),
+  mcpSetEnabled: (name, enabled) => ipcRenderer.invoke('mcp:setEnabled', name, enabled),
+  mcpRemove: (name) => ipcRenderer.invoke('mcp:remove', name),
+  mcpImport: (text) => ipcRenderer.invoke('mcp:import', text),
+  readClipboardText: () => ipcRenderer.invoke('clipboard:read'),
   runTerminal: (conversationId, workspaceDir, command) =>
     ipcRenderer.invoke('terminal:run', conversationId, workspaceDir, command),
   killTerminal: (conversationId) => ipcRenderer.invoke('terminal:kill', conversationId),

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
@@ -147,7 +147,7 @@ function ToolCallCard({ tc }: { tc: ToolCall }): JSX.Element | null {
   )
 }
 
-export function MessageView({
+function MessageViewImpl({
   message,
   isLast,
   onRegenerate
@@ -258,6 +258,10 @@ export function MessageView({
     </div>
   )
 }
+
+// memo：历史消息 props（message 引用 / isLast / onRegenerate 均稳定）不变时不重渲染，
+// 流式每 token 只更新流式气泡，不再把已有消息的 Markdown 全部重新解析（长对话性能关键）
+export const MessageView = memo(MessageViewImpl)
 
 function AssistantAvatar({ active = false }: { active?: boolean }): JSX.Element {
   // 配色反转（参照 Claude）：方块底透明融入 app 背景，只留珊瑚色圆环——
