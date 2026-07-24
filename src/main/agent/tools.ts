@@ -1,4 +1,4 @@
-import { exec } from 'node:child_process'
+import { exec, execFile } from 'node:child_process'
 import dns from 'node:dns/promises'
 import { promises as fs } from 'node:fs'
 import net from 'node:net'
@@ -6,6 +6,14 @@ import path from 'node:path'
 import { z } from 'zod'
 import type { PlanStep, ToolDef } from '@shared/types'
 import { isDangerousCommand, isPrivateIp } from './safety'
+import { buildSeatbeltProfile, sandboxAvailable, sandboxWritePaths } from './sandbox'
+import { extractAny } from '../office/extract'
+import { markdownToDocx } from '../office/docx'
+import { rowsToXlsx, type CellValue, type SheetChart } from '../office/xlsx'
+import { slidesToPptx, type SlideInput } from '../office/pptx'
+import { markdownToPdf } from '../office/pdf'
+import { toCsv } from '../office/csv'
+import { mergePdfs, extractPages, rotatePages, pdfPageCount } from '../office/pdfops'
 import { browserManager } from '../browser'
 import { resolveInWorkspace } from '../security'
 import { skillManager } from '../skills/manager'
@@ -31,6 +39,8 @@ export interface ToolContext {
   }) => Promise<string>
   /** 可派生的子 agent 类型（供 spawn_agent 描述/报错提示；由 loop.ts 注入） */
   agentTypes?: { name: string; description: string }[]
+  /** run_command 是否包 Seatbelt 沙箱（macOS；由 loop.ts 按权限预设与设置注入） */
+  sandbox?: boolean
 }
 
 export interface Tool {
@@ -336,27 +346,39 @@ const runCommand: Tool = {
   },
   execute({ command }, ctx) {
     return new Promise<string>((resolve) => {
-      exec(
-        command,
-        { cwd: ctx.workspace, timeout: 60_000, maxBuffer: 4 * 1024 * 1024 },
-        (err, stdout, stderr) => {
-          let out = ''
-          if (stdout) out += stdout
-          if (stderr) out += (out ? '\n' : '') + stderr
-          // 给模型明确的成败信号，否则它分不清命令是否真的成功
-          if (err) {
-            const status = err.killed
-              ? '[命令超过 60s 超时被终止]'
-              : typeof err.code === 'number'
-                ? `[退出码 ${err.code}]`
-                : !stdout && !stderr
-                  ? err.message
-                  : ''
-            if (status) out += (out ? '\n' : '') + status
-          }
-          resolve(truncate(out || '(无输出)', MAX_OUTPUT_CHARS))
+      const opts = { cwd: ctx.workspace, timeout: 60_000, maxBuffer: 4 * 1024 * 1024 }
+      const cb = (
+        err: import('node:child_process').ExecFileException | null,
+        stdout: string,
+        stderr: string
+      ): void => {
+        let out = ''
+        if (stdout) out += stdout
+        if (stderr) out += (out ? '\n' : '') + stderr
+        // 给模型明确的成败信号，否则它分不清命令是否真的成功
+        if (err) {
+          const status = err.killed
+            ? '[命令超过 60s 超时被终止]'
+            : typeof err.code === 'number'
+              ? `[退出码 ${err.code}]`
+              : !stdout && !stderr
+                ? err.message
+                : ''
+          if (status) out += (out ? '\n' : '') + status
         }
-      )
+        resolve(truncate(out || '(无输出)', MAX_OUTPUT_CHARS))
+      }
+      // 沙箱：写入限定 工作区+临时目录+构建缓存（读/网不限）；不可用或未启用则原样执行
+      if (ctx.sandbox && sandboxAvailable()) {
+        execFile(
+          '/usr/bin/sandbox-exec',
+          ['-p', buildSeatbeltProfile(sandboxWritePaths(ctx.workspace)), '/bin/sh', '-c', command],
+          opts,
+          cb
+        )
+      } else {
+        exec(command, opts, cb)
+      }
     })
   }
 }
@@ -780,6 +802,354 @@ const recall: Tool = {
 
 // 多 agent 编排：派生一个专注的子 agent 完成子任务。子 agent 有独立上下文、自己的工具白名单
 // 与（可选）模型，做完把最终报告返回。编排本身无副作用（子 agent 的写/执行工具仍各自经授权）。
+// ---------------- Office 办公（对齐 Claude 的 docx/xlsx/pptx/pdf 技能：原生读写，零外部依赖） ----------------
+
+/** 从工作区读入若干图片文件 → path→字节 Map（跳过不存在/读失败的，图片格式合法性由生成器判定） */
+async function collectImages(workspace: string, paths: string[]): Promise<Map<string, Buffer>> {
+  const map = new Map<string, Buffer>()
+  for (const p of [...new Set(paths)].filter(Boolean)) {
+    try {
+      map.set(p, await fs.readFile(resolveInWorkspace(workspace, p)))
+    } catch {
+      /* 图片不存在则跳过，生成器会退回 alt 文本 */
+    }
+  }
+  return map
+}
+
+const readDocument: Tool = {
+  name: 'read_document',
+  description:
+    '读取 Office/PDF 文档的文本内容（.docx/.xlsx/.pptx/.pdf/.csv/.tsv）。Word 出正文、Excel/CSV 出各表 TSV、PPT 按幻灯片分节；PDF 内置解析，扫描件在 macOS 上自动用系统 OCR 识别。include_revisions=true 时 Word 额外输出批注与修订痕迹（审阅用）。',
+  sideEffect: 'none',
+  schema: z.object({ path: z.string(), include_revisions: z.boolean().optional() }),
+  parameters: {
+    type: 'object',
+    properties: {
+      path: {
+        type: 'string',
+        description: '相对工作区的文档路径（.docx/.xlsx/.pptx/.pdf/.csv/.tsv）'
+      },
+      include_revisions: {
+        type: 'boolean',
+        description: 'Word 文档：是否附带批注与修订痕迹（增删记录），默认 false'
+      }
+    },
+    required: ['path']
+  },
+  async execute({ path: p, include_revisions }, ctx) {
+    const abs = resolveInWorkspace(ctx.workspace, p)
+    const buf = await fs.readFile(abs)
+    return truncate(await extractAny(p, buf, !!include_revisions), MAX_FILE_CHARS)
+  }
+}
+
+const writeDocx: Tool = {
+  name: 'write_docx',
+  description:
+    '把 Markdown 内容生成为 Word 文档（.docx）。支持 #/##/### 标题、**粗体**/*斜体*/`等宽`、- 与 1. 列表、| 表格 |、``` 代码块、> 引用、以及 ![说明](图片路径) 内嵌图片（PNG/JPEG/GIF，路径相对工作区）。适合报告/纪要/合同等交付物。',
+  sideEffect: 'write',
+  schema: z.object({ path: z.string(), markdown: z.string() }),
+  parameters: {
+    type: 'object',
+    properties: {
+      path: { type: 'string', description: '输出路径（相对工作区，自动补 .docx 后缀）' },
+      markdown: {
+        type: 'string',
+        description: '文档内容（Markdown 格式）。用 ![说明](相对路径.png) 内嵌工作区里的图片'
+      }
+    },
+    required: ['path', 'markdown']
+  },
+  async execute({ path: p, markdown }, ctx) {
+    const rel = p.toLowerCase().endsWith('.docx') ? p : `${p}.docx`
+    const abs = resolveInWorkspace(ctx.workspace, rel)
+    await fs.mkdir(path.dirname(abs), { recursive: true })
+    const imgPaths = [...markdown.matchAll(/!\[[^\]]*\]\(([^)]+)\)/g)].map((m) => m[1].trim())
+    const images = imgPaths.length ? await collectImages(ctx.workspace, imgPaths) : undefined
+    const buf = markdownToDocx(markdown, images)
+    await fs.writeFile(abs, buf)
+    return `已生成 Word 文档 ${rel}（${(buf.length / 1024).toFixed(1)} KB${images?.size ? `，含 ${images.size} 张图片` : ''}）`
+  }
+}
+
+const chartTypeSchema = z.enum(['column', 'bar', 'line', 'pie'])
+const sheetChartSchema = z.object({
+  type: chartTypeSchema,
+  title: z.string().optional(),
+  categoryCol: z.coerce.number().optional(),
+  seriesCols: z.array(z.coerce.number()).optional(),
+  hasHeader: z.boolean().optional()
+})
+const rowsSchema = z.array(z.array(z.union([z.string(), z.number()])))
+
+const writeXlsx: Tool = {
+  name: 'write_xlsx',
+  description:
+    '把二维数组数据生成为 Excel 表格（.xlsx）。首行视作表头（加粗）；数字自动写成数值单元格；"=" 开头的单元格写成公式（如 "=SUM(B2:B10)"）；身份证号/编号等长数字与前导零自动保文本不丢精度；支持多工作表；每个工作表可加一个图表（chart：柱 column/条 bar/折线 line/饼 pie，默认类别取首列、系列取其余各列）。',
+  sideEffect: 'write',
+  schema: z.object({
+    path: z.string(),
+    rows: rowsSchema.optional(),
+    sheet_name: z.string().optional(),
+    chart: sheetChartSchema.optional(),
+    sheets: z
+      .array(z.object({ name: z.string(), rows: rowsSchema, chart: sheetChartSchema.optional() }))
+      .optional()
+  }),
+  parameters: {
+    type: 'object',
+    properties: {
+      path: { type: 'string', description: '输出路径（相对工作区，自动补 .xlsx 后缀）' },
+      rows: {
+        type: 'array',
+        description: '单工作表数据：二维数组（首行=表头），如 [["名称","数量"],["苹果",3]]',
+        items: { type: 'array', items: { type: ['string', 'number'] } }
+      },
+      sheet_name: { type: 'string', description: '单工作表模式下的工作表名（默认 Sheet1）' },
+      chart: {
+        type: 'object',
+        description:
+          '单工作表模式的图表：{ type: column|bar|line|pie, title?, categoryCol?（默认0）, seriesCols?（默认其余列）, hasHeader?（默认true） }',
+        properties: {
+          type: { type: 'string', enum: ['column', 'bar', 'line', 'pie'] },
+          title: { type: 'string' },
+          categoryCol: { type: 'number' },
+          seriesCols: { type: 'array', items: { type: 'number' } },
+          hasHeader: { type: 'boolean' }
+        },
+        required: ['type']
+      },
+      sheets: {
+        type: 'array',
+        description: '多工作表模式：[{ name, rows, chart? }, …]（与 rows 二选一）',
+        items: {
+          type: 'object',
+          properties: {
+            name: { type: 'string' },
+            rows: {
+              type: 'array',
+              items: { type: 'array', items: { type: ['string', 'number'] } }
+            },
+            chart: { type: 'object' }
+          },
+          required: ['name', 'rows']
+        }
+      }
+    },
+    required: ['path']
+  },
+  async execute({ path: p, rows, sheet_name, chart, sheets }, ctx) {
+    const sheetList: { name: string; rows: CellValue[][]; chart?: SheetChart }[] = sheets?.length
+      ? sheets
+      : rows?.length
+        ? [{ name: sheet_name || 'Sheet1', rows, chart }]
+        : []
+    if (!sheetList.length) throw new Error('缺少数据：请提供 rows（二维数组）或 sheets')
+    const rel = p.toLowerCase().endsWith('.xlsx') ? p : `${p}.xlsx`
+    const abs = resolveInWorkspace(ctx.workspace, rel)
+    await fs.mkdir(path.dirname(abs), { recursive: true })
+    const buf = rowsToXlsx(sheetList)
+    await fs.writeFile(abs, buf)
+    const cells = sheetList.reduce((n, s) => n + s.rows.reduce((m, r) => m + r.length, 0), 0)
+    const charts = sheetList.filter((s) => s.chart).length
+    return `已生成 Excel 表格 ${rel}（${sheetList.length} 个工作表，${cells} 个单元格${charts ? `，${charts} 个图表` : ''}）`
+  }
+}
+
+const pptChartSchema = z.object({
+  type: chartTypeSchema,
+  title: z.string().optional(),
+  categories: z.array(z.string()),
+  series: z.array(z.object({ name: z.string(), values: z.array(z.coerce.number()) }))
+})
+
+const writePptx: Tool = {
+  name: 'write_pptx',
+  description:
+    '把大纲生成为 PowerPoint 演示文稿（.pptx，16:9）。每张幻灯片 = 标题 + 要点列表；可选整页配图（image：工作区图片路径）或数据图表（chart：柱/条/折线/饼）。有图/图表的页以其填充正文区。适合汇报框架/提案骨架。',
+  sideEffect: 'write',
+  schema: z.object({
+    path: z.string(),
+    slides: z.array(
+      z.object({
+        title: z.string(),
+        bullets: z.array(z.string()).optional(),
+        image: z.string().optional(),
+        chart: pptChartSchema.optional()
+      })
+    )
+  }),
+  parameters: {
+    type: 'object',
+    properties: {
+      path: { type: 'string', description: '输出路径（相对工作区，自动补 .pptx 后缀）' },
+      slides: {
+        type: 'array',
+        description:
+          '幻灯片列表：[{ title, bullets?: [要点…], image?: "图片路径", chart?: { type, title?, categories:[…], series:[{name,values:[…]}] } }, …]',
+        items: {
+          type: 'object',
+          properties: {
+            title: { type: 'string' },
+            bullets: { type: 'array', items: { type: 'string' } },
+            image: { type: 'string', description: '整页配图：相对工作区的 PNG/JPEG/GIF 路径' },
+            chart: {
+              type: 'object',
+              description:
+                '数据图表：{ type: column|bar|line|pie, title?, categories:[类别…], series:[{name,values:[数值…]}] }',
+              properties: {
+                type: { type: 'string', enum: ['column', 'bar', 'line', 'pie'] },
+                title: { type: 'string' },
+                categories: { type: 'array', items: { type: 'string' } },
+                series: { type: 'array', items: { type: 'object' } }
+              },
+              required: ['type', 'categories', 'series']
+            }
+          },
+          required: ['title']
+        }
+      }
+    },
+    required: ['path', 'slides']
+  },
+  async execute({ path: p, slides }, ctx) {
+    const rel = p.toLowerCase().endsWith('.pptx') ? p : `${p}.pptx`
+    const abs = resolveInWorkspace(ctx.workspace, rel)
+    await fs.mkdir(path.dirname(abs), { recursive: true })
+    const imgPaths = (slides as SlideInput[]).map((s) => s.image).filter((v): v is string => !!v)
+    const images = imgPaths.length ? await collectImages(ctx.workspace, imgPaths) : undefined
+    const buf = slidesToPptx(slides as SlideInput[], images)
+    await fs.writeFile(abs, buf)
+    const extras = (slides as SlideInput[]).filter((s) => s.image || s.chart).length
+    return `已生成演示文稿 ${rel}（${slides.length} 张幻灯片${extras ? `，含 ${extras} 张配图/图表` : ''}）`
+  }
+}
+
+const exportPdf: Tool = {
+  name: 'export_pdf',
+  description:
+    '把 Markdown 内容导出为排版精良的 PDF（Chromium 打印引擎：中文/表格/代码块完整支持）。适合正式交付：报告、方案、说明书。',
+  sideEffect: 'write',
+  schema: z.object({ path: z.string(), markdown: z.string(), title: z.string().optional() }),
+  parameters: {
+    type: 'object',
+    properties: {
+      path: { type: 'string', description: '输出路径（相对工作区，自动补 .pdf 后缀）' },
+      markdown: { type: 'string', description: '文档内容（Markdown 格式）' },
+      title: { type: 'string', description: '文档标题（PDF 元数据）' }
+    },
+    required: ['path', 'markdown']
+  },
+  async execute({ path: p, markdown, title }, ctx) {
+    const rel = p.toLowerCase().endsWith('.pdf') ? p : `${p}.pdf`
+    const abs = resolveInWorkspace(ctx.workspace, rel)
+    await fs.mkdir(path.dirname(abs), { recursive: true })
+    const buf = await markdownToPdf(markdown, title)
+    await fs.writeFile(abs, buf)
+    return `已导出 PDF ${rel}（${(buf.length / 1024).toFixed(1)} KB）`
+  }
+}
+
+const writeCsv: Tool = {
+  name: 'write_csv',
+  description:
+    '把二维数组写成 CSV/TSV 文件（带 UTF-8 BOM，Excel 双击不乱码；含逗号/引号/换行的字段自动加引号转义）。适合数据导出/交换。',
+  sideEffect: 'write',
+  schema: z.object({
+    path: z.string(),
+    rows: z.array(z.array(z.union([z.string(), z.number()]))),
+    delimiter: z.enum([',', '\t', ';']).optional()
+  }),
+  parameters: {
+    type: 'object',
+    properties: {
+      path: { type: 'string', description: '输出路径（相对工作区，自动补 .csv 后缀）' },
+      rows: {
+        type: 'array',
+        description: '二维数组，如 [["名称","数量"],["苹果",3]]',
+        items: { type: 'array', items: { type: ['string', 'number'] } }
+      },
+      delimiter: { type: 'string', description: '分隔符：","（默认）、"\\t"（TSV）、";"' }
+    },
+    required: ['path', 'rows']
+  },
+  async execute({ path: p, rows, delimiter }, ctx) {
+    const isTab = delimiter === '\t'
+    const ext = isTab ? '.tsv' : '.csv'
+    const rel = /\.(csv|tsv)$/i.test(p) ? p : `${p}${ext}`
+    const abs = resolveInWorkspace(ctx.workspace, rel)
+    await fs.mkdir(path.dirname(abs), { recursive: true })
+    await fs.writeFile(abs, toCsv(rows, delimiter ?? ',', true), 'utf8')
+    return `已生成 ${rel}（${rows.length} 行）`
+  }
+}
+
+const pdfPages: Tool = {
+  name: 'pdf_pages',
+  description:
+    'PDF 页级操作：合并多个 PDF（merge）、抽取/拆分指定页（extract，页码如 "1-3,5"）、旋转页面（rotate，角度 90/180/270）。加密 PDF 无法操作。',
+  sideEffect: 'write',
+  schema: z.object({
+    operation: z.enum(['merge', 'extract', 'rotate']),
+    output: z.string(),
+    inputs: z.array(z.string()).optional(),
+    input: z.string().optional(),
+    pages: z.string().optional(),
+    rotate: z.coerce.number().optional()
+  }),
+  parameters: {
+    type: 'object',
+    properties: {
+      operation: {
+        type: 'string',
+        enum: ['merge', 'extract', 'rotate'],
+        description: 'merge=合并；extract=抽取/拆分页；rotate=旋转页'
+      },
+      output: { type: 'string', description: '输出 PDF 路径（相对工作区，自动补 .pdf）' },
+      inputs: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'merge：要合并的多个 PDF 路径（按序拼接）'
+      },
+      input: { type: 'string', description: 'extract/rotate：源 PDF 路径' },
+      pages: {
+        type: 'string',
+        description: 'extract：要取的页码，如 "1-3,5,8-"；rotate：要旋转的页（省略=全部）'
+      },
+      rotate: { type: 'number', description: 'rotate：顺时针角度 90/180/270' }
+    },
+    required: ['operation', 'output']
+  },
+  async execute({ operation, output, inputs, input, pages, rotate }, ctx) {
+    const rel = output.toLowerCase().endsWith('.pdf') ? output : `${output}.pdf`
+    const absOut = resolveInWorkspace(ctx.workspace, rel)
+    await fs.mkdir(path.dirname(absOut), { recursive: true })
+    const read = async (rp: string): Promise<Buffer> =>
+      fs.readFile(resolveInWorkspace(ctx.workspace, rp))
+
+    let buf: Buffer
+    let note: string
+    if (operation === 'merge') {
+      if (!inputs?.length || inputs.length < 2)
+        throw new Error('merge 需要 inputs（≥2 个 PDF 路径）')
+      const bufs = await Promise.all(inputs.map(read))
+      buf = mergePdfs(bufs)
+      note = `合并 ${inputs.length} 个 PDF → 共 ${pdfPageCount(buf)} 页`
+    } else if (operation === 'extract') {
+      if (!input || !pages) throw new Error('extract 需要 input 与 pages（如 "1-3,5"）')
+      buf = extractPages(await read(input), pages, rotate ?? 0)
+      note = `抽取「${pages}」→ ${pdfPageCount(buf)} 页`
+    } else {
+      if (!input || !rotate) throw new Error('rotate 需要 input 与 rotate 角度（90/180/270）')
+      buf = rotatePages(await read(input), rotate, pages)
+      note = `旋转 ${rotate}°${pages ? `（第 ${pages} 页）` : '（全部）'}`
+    }
+    await fs.writeFile(absOut, buf)
+    return `已生成 ${rel}（${note}，${(buf.length / 1024).toFixed(1)} KB）`
+  }
+}
+
 const spawnAgentTool: Tool = {
   name: 'spawn_agent',
   description:
@@ -827,12 +1197,32 @@ const ALL: Tool[] = [
   forgetMemory,
   recall,
   saveSkill,
+  readDocument,
+  writeDocx,
+  writeXlsx,
+  writePptx,
+  exportPdf,
+  writeCsv,
+  pdfPages,
   spawnAgentTool
 ]
 const REGISTRY = new Map(ALL.map((t) => [t.name, t]))
 
 // 模型常把工具叫成别的名字（尤其能力较弱的模型）；做高置信度归一化，减少“未知工具”失败
 const ALIASES: Record<string, string> = {
+  read_docx: 'read_document',
+  read_xlsx: 'read_document',
+  read_pdf: 'read_document',
+  read_pptx: 'read_document',
+  create_docx: 'write_docx',
+  create_xlsx: 'write_xlsx',
+  create_pptx: 'write_pptx',
+  write_pdf: 'export_pdf',
+  create_pdf: 'export_pdf',
+  merge_pdf: 'pdf_pages',
+  split_pdf: 'pdf_pages',
+  rotate_pdf: 'pdf_pages',
+  create_csv: 'write_csv',
   bash: 'run_command',
   sh: 'run_command',
   zsh: 'run_command',
@@ -910,6 +1300,13 @@ export function describeTool(tool: Tool, args: Record<string, unknown>): string 
   if (tool.name === 'add_memory') return `写入项目记忆：${String(args.text ?? '')}`
   if (tool.name === 'forget_memory') return `删除项目记忆：${String(args.id ?? '')}`
   if (tool.name === 'save_skill') return `沉淀技能：${String(args.name ?? '')}`
+  if (tool.name === 'write_docx') return `生成 Word 文档：${String(args.path ?? '')}`
+  if (tool.name === 'write_xlsx') return `生成 Excel 表格：${String(args.path ?? '')}`
+  if (tool.name === 'write_pptx') return `生成演示文稿：${String(args.path ?? '')}`
+  if (tool.name === 'export_pdf') return `导出 PDF：${String(args.path ?? '')}`
+  if (tool.name === 'write_csv') return `生成 CSV：${String(args.path ?? '')}`
+  if (tool.name === 'pdf_pages')
+    return `PDF 页操作（${String(args.operation ?? '')}）→ ${String(args.output ?? '')}`
   if (tool.sideEffect === 'write' && args.path != null) return `${tool.name} → ${String(args.path)}`
   return tool.name
 }

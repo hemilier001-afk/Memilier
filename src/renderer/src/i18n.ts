@@ -48,7 +48,7 @@ const DICT: Dict = {
   setModels: { zh: '模型', en: 'Models' },
   setVoice: { zh: '语音', en: 'Voice' },
   setMcp: { zh: 'MCP', en: 'MCP' },
-  setSkills: { zh: '技能与插件', en: 'Skills & Plugins' },
+  setSkills: { zh: '技能', en: 'Skills' },
   setShortcuts: { zh: '快捷键', en: 'Shortcuts' },
   setAbout: { zh: '关于', en: 'About' },
   submitKey: { zh: '发送方式', en: 'Send with' },
@@ -146,6 +146,121 @@ const DICT: Dict = {
   },
   mcpRemoveConfirm: { zh: '删除 MCP server「{name}」？', en: 'Remove MCP server "{name}"?' },
   mcpTrust: { zh: '信任并启用', en: 'Trust & enable' },
+  // 扩展中心（插件 / 应用 / MCP 统一页，对齐 Codex）
+  extTitle: { zh: '扩展', en: 'Extensions' },
+  extSubtitle: { zh: '管理应用、MCP 与插件', en: 'Manage apps, MCP and plugins' },
+  extApps: { zh: '应用', en: 'Apps' },
+  extMcp: { zh: 'MCP', en: 'MCP' },
+  extPlugins: { zh: '插件', en: 'Plugins' },
+  extSearchApps: { zh: '搜索应用 / MCP…', en: 'Search apps / MCP…' },
+  extSearchMcp: { zh: '筛选已装 MCP…', en: 'Filter installed MCP…' },
+  extSearchPlugins: { zh: '筛选插件…', en: 'Filter plugins…' },
+  extSearching: { zh: '搜索中…', en: 'Searching…' },
+  extNoResults: { zh: '没有匹配的应用', en: 'No matching apps' },
+  extRegistryOffline: {
+    zh: '注册中心暂时离线，仅显示内置精选',
+    en: 'Registry offline — showing built-in only'
+  },
+  extRegistry: { zh: '注册中心', en: 'Registry' },
+  extBuiltin: { zh: '内置', en: 'Built-in' },
+  extInstalled: { zh: '已接入', en: 'Installed' },
+  extConnect: { zh: '接入', en: 'Connect' },
+  extInstall: { zh: '安装', en: 'Install' },
+  extNoServers: { zh: '尚未配置任何 MCP server', en: 'No MCP servers configured yet' },
+  extTools: { zh: '工具', en: 'tools' },
+  extFromPlugin: { zh: '来自插件', en: 'from plugin' },
+  extManageInPlugins: { zh: '在插件页管理', en: 'manage in Plugins' },
+  extNoPlugins: { zh: '尚未安装插件', en: 'No plugins installed' },
+  extSkills: { zh: '技能', en: 'skills' },
+  extMarketplace: { zh: '插件市场', en: 'Marketplace' },
+  extServers: { zh: '服务器', en: 'Servers' },
+  extAddServer: { zh: '添加服务器', en: 'Add server' },
+  extFromPluginsSection: { zh: '来自插件', en: 'From plugins' },
+  extInstalledSection: { zh: '已安装', en: 'Installed' },
+  extAdvanced: { zh: '高级（JSON 格式）', en: 'Advanced (JSON format)' },
+  mcpImportClipboard: { zh: '从剪贴板导入', en: 'Import from clipboard' },
+  // 界面兜底与侧栏提示（英文模式补齐）
+  errBoundaryTitle: { zh: '界面出现错误', en: 'Something went wrong' },
+  errReload: { zh: '重新加载', en: 'Reload' },
+  errDismiss: { zh: '忽略并继续', en: 'Dismiss and continue' },
+  sbExpand: { zh: '展开侧栏', en: 'Expand sidebar' },
+  sbCollapse: { zh: '折叠侧栏', en: 'Collapse sidebar' },
+  projMoveIn: { zh: '移入当前项目', en: 'Add to current project' },
+  projMoveOut: { zh: '移出当前项目', en: 'Remove from current project' },
+  projDelete: { zh: '删除项目', en: 'Delete project' },
+  projDeleteConfirm: {
+    zh: '删除项目「{n}」？其对话会变为未分组。',
+    en: 'Delete project "{n}"? Its chats become ungrouped.'
+  },
+  customCmd: { zh: '自定义命令', en: 'Custom command' },
+  // 例程模板的 prompt 正文（名称复用 tpl* 键）
+  tplErrorSummaryPrompt: {
+    zh: '扫描工作区里最近的日志（如 logs/ 目录或 *.log 文件），汇总今天出现的错误与告警，按出现频次排序，写一份简明摘要。',
+    en: 'Scan recent logs in the workspace (e.g. logs/ or *.log), summarize today’s errors and warnings ranked by frequency, and write a concise digest.'
+  },
+  tplDepCheckPrompt: {
+    zh: '检查本项目的依赖（package.json 等）是否有新版本可升级，列出可升级项、当前版本→最新版本，以及可能的破坏性变更提示。不要自动升级。',
+    en: 'Check whether this project’s dependencies (package.json, etc.) have upgrades; list upgradable items, current→latest versions, and possible breaking changes. Do not upgrade automatically.'
+  },
+  tplFileTidyPrompt: {
+    zh: '有新文件进入 inbox 目录时，识别其类型并整理：按类别/日期归类，必要时重命名，给出整理说明。操作前先说明计划。',
+    en: 'When new files land in the inbox folder, identify their type and organize them by category/date, renaming if needed, with an explanation. State the plan before acting.'
+  },
+  // 权限预设（四挡）与安全页
+  setSecurity: { zh: '安全', en: 'Security' },
+  apTitle: { zh: '权限', en: 'Permissions' },
+  apAsk: { zh: '请求批准', en: 'Request approval' },
+  apAskDesc: { zh: '写入/执行逐项确认', en: 'Confirm each write/exec' },
+  apAuto: { zh: '替我审批', en: 'Approve for me' },
+  apAutoDesc: {
+    zh: '工作区内常规操作自动批；MCP 与危险命令仍确认',
+    en: 'Auto-approve routine ops; MCP & dangerous still ask'
+  },
+  apFull: { zh: '完全访问', en: 'Full access' },
+  apFullDesc: {
+    zh: '全部自动批（危险命令除外），命令不进沙箱',
+    en: 'Auto-approve all (except dangerous); no sandbox'
+  },
+  apCustom: { zh: '自定义', en: 'Custom' },
+  apCustomDesc: {
+    zh: '按类别设置放行策略（见设置-安全）',
+    en: 'Per-category policy (Settings → Security)'
+  },
+  apDefaultLabel: { zh: '默认权限模式', en: 'Default permission mode' },
+  apDefaultHint: {
+    zh: '新会话与未单独设置的会话使用此默认；会话内可在输入框「模式」菜单单独切换。危险命令与工作区 deny 规则在任何模式下都不放行。',
+    en: 'Used unless a conversation overrides it in the composer mode menu. Dangerous commands and workspace deny rules always require confirmation.'
+  },
+  polTitle: { zh: '自定义策略（按类别）', en: 'Custom policy (per category)' },
+  polFileWrite: { zh: '文件写入', en: 'File writes' },
+  polCommand: { zh: '命令执行', en: 'Commands' },
+  polNetwork: { zh: '联网工具（抓取/搜索/浏览器）', en: 'Network (fetch/search/browser)' },
+  polMemorySkill: { zh: '记忆与技能写入', en: 'Memory & skill writes' },
+  polMcp: { zh: 'MCP 工具', en: 'MCP tools' },
+  polAuto: { zh: '自动放行', en: 'Auto-approve' },
+  polAsk: { zh: '每次询问', en: 'Ask' },
+  sandboxLabel: { zh: '命令沙箱（macOS）', en: 'Command sandbox (macOS)' },
+  sandboxHint: {
+    zh: 'run_command 包 Seatbelt 沙箱：读取不限，文件写入限定在 工作区+临时目录+构建缓存。完全访问模式或 Windows 下不生效。',
+    en: 'Wraps run_command in Seatbelt: reads unrestricted; writes limited to workspace + temp + build caches. Off in Full access mode and on Windows.'
+  },
+  auditTitle: { zh: '审计日志', en: 'Audit log' },
+  auditHint: {
+    zh: '每次工具执行的「谁批的、批没批、成没成」都会追加记录到 audit.log（自动放行越多，事后可查越重要）。',
+    en: 'Every tool run is appended to audit.log — who approved it, and whether it succeeded.'
+  },
+  auditRefresh: { zh: '刷新', en: 'Refresh' },
+  auditOpenFile: { zh: '打开日志文件', en: 'Open log file' },
+  auditEmpty: { zh: '（暂无记录）', en: '(no entries yet)' },
+  adPreset: { zh: '预设放行', en: 'preset' },
+  adRuleAllow: { zh: '规则放行', en: 'rule allow' },
+  adRuleDeny: { zh: '规则拒绝', en: 'rule deny' },
+  adReadonly: { zh: '只读自动', en: 'read-only' },
+  adRemembered: { zh: '已记住', en: 'remembered' },
+  adUser: { zh: '用户批准', en: 'user approved' },
+  adUserDeny: { zh: '用户拒绝', en: 'user denied' },
+  adUnattended: { zh: '例程自动', en: 'unattended' },
+  adHookBlock: { zh: '钩子拦截', en: 'hook blocked' },
 
   // 设置 - 技能/插件
   skillsTitle: { zh: '技能（Skills）', en: 'Skills' },
@@ -171,11 +286,15 @@ const DICT: Dict = {
   // 子 agent（多 agent）
   agentsTitle: { zh: '子 agent（多 agent 编排）', en: 'Subagents (multi-agent)' },
   agentsHint: {
-    zh: '主 agent 可用 spawn_agent 工具派生这些子 agent 去做专注子任务（可并行）。在 .hemilier/agents/ 放 .md 文件（frontmatter: name/description/tools/model + 正文=系统提示）可新增或覆盖。',
-    en: 'The main agent can spawn these to run focused subtasks (in parallel) via the spawn_agent tool. Add or override them with .md files in .hemilier/agents/ (frontmatter: name/description/tools/model + body = system prompt).'
+    zh: '主 agent 可派生这些子 agent 并行处理专注子任务；在 .hemilier/agents/ 放 .md 可新增。',
+    en: 'The main agent spawns these for focused subtasks; add more via .md in .hemilier/agents/.'
   },
 
   // Skills / Plugins 页补充
+  skillsHint: {
+    zh: '模型按需加载的能力包；放在 .hemilier/skills/ 或 userData/skills。',
+    en: 'Capability packs the model loads on demand; under .hemilier/skills/ or userData/skills.'
+  },
   skillsInstalledHint: {
     zh: '安装后模型即可处理对应文件类型（部分需本机有 Python 环境）。',
     en: 'Once installed the model can handle these file types (some require local Python).'
@@ -186,8 +305,12 @@ const DICT: Dict = {
 
   // 关于
   aboutDesc: {
-    zh: '桌面智能体：对话 + 工具调用 + 文件/命令操作，由本地 Ollama 或云端模型驱动。',
-    en: 'A desktop agent: chat + tool use + file/command actions, powered by local Ollama or cloud models.'
+    zh: '一个运行在桌面端的 AI 智能体：多轮对话 + 自主工具调用（读写文件、执行命令、联网搜索、可视浏览器、Office 文档读写、MCP 扩展），由本地 Ollama 或云端 OpenAI 兼容模型（DeepSeek / MiniMax / OpenAI 等）驱动。内置权限四挡审批、命令沙箱与审计日志，安全可控。',
+    en: 'A desktop AI agent: multi-turn chat with autonomous tool use (files, commands, web search, a managed browser, Office document read/write, MCP extensions), powered by local Ollama or OpenAI-compatible cloud models (DeepSeek / MiniMax / OpenAI). Ships with four-tier approval presets, a command sandbox, and an audit log.'
+  },
+  aboutFeatures: {
+    zh: '对话 · 智能体 · 多模型 · 办公文档 · 扩展中心 · 安全管控',
+    en: 'Chat · Agent · Multi-model · Office docs · Extensions · Security'
   },
 
   // 视图模式

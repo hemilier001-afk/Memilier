@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import type { AgentEvent, Message, Settings, ToolCall } from '@shared/types'
+import type { AgentEvent, ApprovalMode, Message, Settings, ToolCall } from '@shared/types'
 import type { ModelProvider } from '../providers/types'
 import { imageStore } from '../images'
 import { mcpManager, mcpSignature } from '../mcp/manager'
@@ -14,12 +14,13 @@ import type { PermissionManager } from './permission'
 import {
   describeTool,
   getTool,
-  isDangerousCommand,
   listToolDefs,
   listToolDefsFor,
   toolNames,
   type ToolContext
 } from './tools'
+import { isDangerousCommand, presetDecision, toolCategory } from './safety'
+import { appendAudit } from '../audit'
 import { agentManager } from './agents/manager'
 import { makeHookRunner } from './hooks'
 
@@ -205,6 +206,15 @@ function zhZodIssue(issue: {
 // 工作区级 allow/deny 权限规则（.hemilier/permissions.json）：
 // { "allow": ["run_command:npm *", "read_file"], "deny": ["run_command:rm *"] }
 // deny 优先于 allow；命中 allow 则自动放行（危险命令 forcePrompt 仍强制确认）。
+/** 审计用：入参摘要（截断，防日志膨胀） */
+function shortArgs(a: unknown): string {
+  try {
+    return JSON.stringify(a).slice(0, 300)
+  } catch {
+    return ''
+  }
+}
+
 interface PermRules {
   allow: string[]
   deny: string[]
@@ -245,6 +255,7 @@ async function executeToolCall(
     settings: Settings
     allowMcp: boolean
     rules?: PermRules
+    approvalMode?: ApprovalMode
   }
 ): Promise<string> {
   if (typeof tc.args === 'string') {
@@ -282,23 +293,53 @@ async function executeToolCall(
     !isMcp &&
     tool!.name === 'run_command' &&
     isDangerousCommand(String((dialogArgs as { command?: string })?.command ?? ''))
+  const audit = (decision: string, extra?: { ok?: boolean; error?: string; ms?: number }): void =>
+    appendAudit({
+      ts: Date.now(),
+      conv: ctx.conversationId ?? '',
+      tool: tc.name,
+      args: shortArgs(dialogArgs),
+      effect: sideEffect,
+      decision,
+      sandbox: !isMcp && tool!.name === 'run_command' ? !!ctx.sandbox : undefined,
+      source: 'subagent',
+      ...extra
+    })
   // 工作区权限规则：deny 直接拒绝；allow 且非危险命令则免确认放行
   const decision = o.rules ? ruleDecision(o.rules, tc.name, dialogArgs) : undefined
   if (decision === 'deny') {
     tc.status = 'denied'
     tc.error = '被工作区权限规则（deny）拒绝'
+    audit('rule-deny', { ok: false, error: tc.error })
     return '该操作被 .hemilier/permissions.json 的 deny 规则拒绝。'
   }
-  const approved =
-    decision === 'allow' && !forcePrompt
-      ? true
-      : await o.permission.request(tc, sideEffect, description, forcePrompt, o.signal)
+  // 决策链：allow 规则 > 权限预设（四挡）> 权限网关（只读自动/记住/弹框）；危险命令必弹
+  let via: string
+  let approved: boolean
+  const preset = presetDecision(
+    o.approvalMode ?? 'ask',
+    toolCategory(tc.name, sideEffect, isMcp),
+    o.settings.customPolicy
+  )
+  if (decision === 'allow' && !forcePrompt) {
+    approved = true
+    via = 'rule-allow'
+  } else if (preset === 'auto' && !forcePrompt) {
+    approved = true
+    via = 'preset'
+  } else {
+    const r = await o.permission.requestEx(tc, sideEffect, description, forcePrompt, o.signal)
+    approved = r.approved
+    via = r.via
+  }
   if (!approved) {
     tc.status = 'denied'
     tc.error = '用户拒绝执行'
+    audit(via, { ok: false, error: tc.error })
     return '用户拒绝了该操作。'
   }
   tc.status = 'running'
+  const startedAt = Date.now()
   try {
     const doExec = (): Promise<string> =>
       isMcp ? mcpManager.callTool(tc.name, tc.args) : tool!.execute(parsedArgs, ctx)
@@ -309,10 +350,12 @@ async function executeToolCall(
         : await doExec()
     tc.status = 'done'
     tc.result = r
+    audit(via, { ok: true, ms: Date.now() - startedAt })
     return r
   } catch (e) {
     tc.status = 'error'
     tc.error = e instanceof Error ? e.message : String(e)
+    audit(via, { ok: false, error: tc.error, ms: Date.now() - startedAt })
     return `错误：${tc.error}`
   }
 }
@@ -348,6 +391,7 @@ export async function runSubAgent(opts: {
   depth: number
   onProgress?: (trace: string) => void
   recordDiff?: (path: string, before: string, after: string) => void
+  approvalMode?: ApprovalMode
 }): Promise<string> {
   const { workspace, task, permission, signal, skillDirs, conversationId } = opts
   if (opts.depth >= 1) return '（子 agent 不能再派生子 agent，请由主 agent 统筹。）'
@@ -403,7 +447,14 @@ export async function runSubAgent(opts: {
   const messages: Message[] = [
     { id: randomUUID(), role: 'user', content: task, createdAt: Date.now() }
   ]
-  const ctx: ToolContext = { workspace, conversationId, skillDirs, recordDiff: opts.recordDiff }
+  const approval = opts.approvalMode ?? settings.approvalMode ?? 'ask'
+  const ctx: ToolContext = {
+    workspace,
+    conversationId,
+    skillDirs,
+    recordDiff: opts.recordDiff,
+    sandbox: (settings.sandboxCommands ?? true) && approval !== 'full'
+  }
   const trace: string[] = []
   let lastContent = ''
   const label = def ? `子 agent「${def.name}」` : '子 agent'
@@ -439,7 +490,8 @@ export async function runSubAgent(opts: {
         signal,
         settings,
         allowMcp: false,
-        rules: subRules
+        rules: subRules,
+        approvalMode: approval
       })
       trace.push(tc.status === 'error' || tc.status === 'denied' ? `${tc.name}✗` : tc.name)
       emit('')
@@ -570,11 +622,15 @@ export async function runAgent(opts: RunOptions): Promise<void> {
     }
     send({ type: 'diff', entry: { id: randomUUID(), path: p, before, after, at: Date.now() } })
   }
+  // 会话级权限预设：会话未设则用全局默认；full 模式命令不进沙箱（完全访问语义）
+  const approval: ApprovalMode = conv.approvalMode ?? settings.approvalMode ?? 'ask'
+  const cmdSandbox = (settings.sandboxCommands ?? true) && approval !== 'full'
   const ctx = {
     workspace,
     conversationId,
     skillDirs: pluginSkillDirs,
     recordDiff,
+    sandbox: cmdSandbox,
     setPlan: (steps: import('@shared/types').PlanStep[]) => {
       conv.plan = steps
       store.saveConversation(conv)
@@ -601,7 +657,8 @@ export async function runAgent(opts: RunOptions): Promise<void> {
         conversationId,
         depth: 0,
         onProgress,
-        recordDiff
+        recordDiff,
+        approvalMode: approval
       }),
     agentTypes: agentDefs.map((a) => ({ name: a.name, description: a.description }))
   }
@@ -711,21 +768,53 @@ export async function runAgent(opts: RunOptions): Promise<void> {
           !isMcp &&
           tool!.name === 'run_command' &&
           isDangerousCommand(String((dialogArgs as { command?: string })?.command ?? ''))
+        const audit = (
+          decision: string,
+          extra?: { ok?: boolean; error?: string; ms?: number }
+        ): void =>
+          appendAudit({
+            ts: Date.now(),
+            conv: conversationId,
+            tool: tc.name,
+            args: shortArgs(dialogArgs),
+            effect: sideEffect,
+            decision,
+            sandbox: !isMcp && tool!.name === 'run_command' ? cmdSandbox : undefined,
+            source: 'chat',
+            ...extra
+          })
         // 工作区权限规则：deny 直接拒绝；allow 且非危险命令免确认放行
         const decision = ruleDecision(permRules, tc.name, dialogArgs)
         if (decision === 'deny') {
           tc.status = 'denied'
           tc.error = '被工作区权限规则（deny）拒绝'
+          audit('rule-deny', { ok: false, error: tc.error })
           resultTexts.set(tc.id, '该操作被 .hemilier/permissions.json 的 deny 规则拒绝。')
           return
         }
-        const approved =
-          decision === 'allow' && !forcePrompt
-            ? true
-            : await permission.request(tc, sideEffect, description, forcePrompt, signal)
+        // 决策链：allow 规则 > 权限预设（四挡）> 权限网关（只读自动/记住/弹框）；危险命令必弹
+        let via: string
+        let approved: boolean
+        const preset = presetDecision(
+          approval,
+          toolCategory(tc.name, sideEffect, isMcp),
+          settings.customPolicy
+        )
+        if (decision === 'allow' && !forcePrompt) {
+          approved = true
+          via = 'rule-allow'
+        } else if (preset === 'auto' && !forcePrompt) {
+          approved = true
+          via = 'preset'
+        } else {
+          const r = await permission.requestEx(tc, sideEffect, description, forcePrompt, signal)
+          approved = r.approved
+          via = r.via
+        }
         if (!approved) {
           tc.status = 'denied'
           tc.error = '用户拒绝执行'
+          audit(via, { ok: false, error: tc.error })
           resultTexts.set(tc.id, '用户拒绝了该操作。')
           return
         }
@@ -734,10 +823,12 @@ export async function runAgent(opts: RunOptions): Promise<void> {
         if (pre.block) {
           tc.status = 'denied'
           tc.error = `被 PreToolUse 钩子拦截：${pre.reason ?? ''}`
+          audit('hook-block', { ok: false, error: tc.error })
           resultTexts.set(tc.id, tc.error)
           return
         }
         tc.status = 'running'
+        const startedAt = Date.now()
         send({ type: 'tool_call_result', id: tc.id, status: 'running' })
         try {
           // spawn_agent：给它一个能把子 agent 进度实时回传到本工具卡片的 ctx
@@ -763,12 +854,14 @@ export async function runAgent(opts: RunOptions): Promise<void> {
             : await tool!.execute(parsedArgs, execCtx)
           tc.status = 'done'
           tc.result = r
+          audit(via, { ok: true, ms: Date.now() - startedAt })
           resultTexts.set(tc.id, r)
           // PostToolUse 钩子：工具成功后触发（如改完文件自动 format / 跑测试）
           await hooks.postTool(tc.name, dialogArgs)
         } catch (e) {
           tc.status = 'error'
           tc.error = e instanceof Error ? e.message : String(e)
+          audit(via, { ok: false, error: tc.error, ms: Date.now() - startedAt })
           resultTexts.set(tc.id, `错误：${tc.error}`)
         }
       }

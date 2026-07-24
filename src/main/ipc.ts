@@ -10,7 +10,8 @@ import type {
   GitStatus,
   MemoryType,
   PermissionRequest,
-  Settings
+  Settings,
+  ApprovalMode
 } from '@shared/types'
 
 /** 在工作区跑一条 git 命令（core.quotepath=false：中文等非 ASCII 文件名按原样输出，不做八进制转义） */
@@ -56,6 +57,8 @@ import { PermissionManager } from './agent/permission'
 import { imageStore } from './images'
 import { mcpManager, mcpSignature } from './mcp/manager'
 import { MCP_CATALOG } from './mcp/catalog'
+import { searchRegistry } from './mcp/registry'
+import type { McpSearchResult } from '@shared/types'
 import { pluginManager } from './plugins/manager'
 import { skillManager } from './skills/manager'
 import { agentManager } from './agent/agents/manager'
@@ -66,6 +69,8 @@ import { routineManager } from './routines/manager'
 import { resolveInWorkspace } from './security'
 import { store } from './store'
 import { netFetch } from './providers/netfetch'
+import { auditPath, listAudit } from './audit'
+import { extractAny, isOfficeFile } from './office/extract'
 
 /** 按设置应用网络代理：空=跟随系统代理（多数国内代理软件会设系统代理）；填了=固定服务器 */
 function applyProxy(url?: string): void {
@@ -78,7 +83,6 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     getWindow()?.webContents.send(channel, payload)
   }
   applyProxy(store.getSettings().proxyUrl) // 启动即应用代理
-
   const permission = new PermissionManager(
     (req: PermissionRequest) => sendToRenderer('permission:request', req),
     () => store.getSettings()
@@ -182,6 +186,11 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   ipcMain.handle('conversations:setMode', (_e, id: string, mode: 'auto' | 'plan' | 'chat') =>
     store.setConversationMode(id, mode)
   )
+  ipcMain.handle('conversations:setApproval', (_e, id: string, mode: ApprovalMode) =>
+    store.setConversationApproval(id, mode)
+  )
+  ipcMain.handle('audit:list', (_e, limit?: number) => listAudit(limit ?? 200))
+  ipcMain.handle('audit:open', () => shell.showItemInFolder(auditPath()))
   ipcMain.handle('conversations:setWorkspace', (_e, id: string, dir: string) =>
     store.setConversationWorkspace(id, dir)
   )
@@ -201,13 +210,35 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
     if (res.canceled || !res.filePaths[0]) return null
     const fp = res.filePaths[0]
+    // 旧版二进制格式没有解析器：给明确指引而不是把二进制按 utf8 读成乱码
+    if (/\.(doc|xls|ppt)$/i.test(fp)) {
+      return {
+        name: basename(fp),
+        content:
+          '（旧版二进制格式（.doc/.xls/.ppt）不支持：请先在 Office/WPS 里另存为 .docx/.xlsx/.pptx 再上传）'
+      }
+    }
     try {
-      const raw = await fsp.readFile(fp, 'utf8')
+      // Office/PDF 附件：先提取纯文本再入对话（否则二进制读出来是乱码）
+      const raw = isOfficeFile(fp)
+        ? await extractAny(fp, await fsp.readFile(fp))
+        : await fsp.readFile(fp, 'utf8')
       const content = raw.length > 100_000 ? `${raw.slice(0, 100_000)}\n…（已截断）` : raw
       return { name: basename(fp), content }
     } catch (e) {
       return { name: basename(fp), content: `（无法读取：${String(e)}）` }
     }
+  })
+  // 右栏预览 / 渲染端按需提取（工作区内文件）
+  ipcMain.handle('office:extract', async (_e, ws: string, rel: string) => {
+    const abs = resolveInWorkspace(ws, rel)
+    return await extractAny(rel, await fsp.readFile(abs))
+  })
+  // 拖拽附件（绝对路径来自用户亲手拖入的文件，等同 pickFile 的用户授权语义）
+  ipcMain.handle('office:extractPath', async (_e, absPath: string) => {
+    const st = statSync(absPath)
+    if (!st.isFile()) throw new Error('不是文件')
+    return await extractAny(absPath, await fsp.readFile(absPath))
   })
 
   // 选择本地图片，读成 data URL（供视觉模型）
@@ -547,9 +578,16 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     // 标注来源：user=设置里配置的（可启停/删除），plugin=插件提供的（在插件页管理）
     const sourceOf = (name: string): 'user' | 'plugin' =>
       s.mcpServers && name in s.mcpServers ? 'user' : 'plugin'
-    return [...statuses, ...untrusted].map((st) => ({ ...st, source: sourceOf(st.name) }))
+    // enabled：用户配置的 server 读 cfg.enabled（缺省视为启用），供开关显示当前态
+    const enabledOf = (name: string): boolean => s.mcpServers?.[name]?.enabled !== false
+    return [...statuses, ...untrusted].map((st) => ({
+      ...st,
+      source: sourceOf(st.name),
+      enabled: enabledOf(st.name)
+    }))
   })
   ipcMain.handle('clipboard:read', () => clipboard.readText())
+  ipcMain.handle('app:version', () => app.getVersion())
   ipcMain.handle('mcp:catalog', () => {
     const installed = new Set(Object.keys(store.getSettings().mcpServers ?? {}))
     return MCP_CATALOG.map(({ command: _c, args: _a, ...pub }) => ({
@@ -557,6 +595,65 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
       installed: installed.has(pub.id)
     }))
   })
+  ipcMain.handle('mcp:search', async (_e, query: string) => {
+    const s = store.getSettings()
+    const installed = new Set(Object.keys(s.mcpServers ?? {}))
+    const q = (query ?? '').trim().toLowerCase()
+    // A 层：内置种子目录（离线可用）
+    const builtin: McpSearchResult[] = MCP_CATALOG.filter(
+      (c) => !q || `${c.name} ${c.description} ${c.category} ${c.id}`.toLowerCase().includes(q)
+    ).map((c) => ({
+      key: c.id,
+      name: c.name,
+      description: c.description,
+      source: 'builtin' as const,
+      icon: c.icon,
+      category: c.category,
+      installed: installed.has(c.id),
+      envFields: c.envFields,
+      argFields: c.argFields
+    }))
+    // B 层：在线注册中心（≥2 字符才查；失败则仅返回种子）
+    let registry: McpSearchResult[] = []
+    let registryOk = true
+    if (q.length >= 2) {
+      try {
+        const builtinKeys = new Set(builtin.map((b) => b.key))
+        registry = (await searchRegistry(q, 30, s.proxyUrl))
+          .filter((r) => !builtinKeys.has(r.key))
+          .map((r) => ({ ...r, installed: installed.has(r.key) }))
+      } catch (e) {
+        registryOk = false
+        console.error('[mcp:search] 注册中心失败：', e instanceof Error ? e.message : e)
+      }
+    }
+    return { results: [...builtin, ...registry], registryOk }
+  })
+  ipcMain.handle(
+    'mcp:installRegistry',
+    (_e, entry: McpSearchResult, input: { env?: Record<string, string>; extraArgs?: string[] }) => {
+      if (!entry?.command && !entry?.url) return { ok: false, error: '该条目缺少可运行信息' }
+      for (const f of entry.envFields ?? []) {
+        if (f.required && !input.env?.[f.key]?.trim())
+          return { ok: false, error: `缺少 ${f.label}` }
+      }
+      if ((entry.argFields ?? []).some((f, i) => f.required && !input.extraArgs?.[i]?.trim())) {
+        return { ok: false, error: '缺少必填参数' }
+      }
+      const s = store.getSettings()
+      // 远程 server 配 { url, type }；本地包配 { command, args, env }
+      const cfg = entry.url
+        ? { url: entry.url, type: entry.transport ?? 'http' }
+        : {
+            command: entry.command!,
+            args: [...(entry.args ?? []), ...(input.extraArgs ?? []).filter(Boolean)],
+            ...(input.env && Object.keys(input.env).length ? { env: input.env } : {})
+          }
+      // 注册中心=第三方来源：只写配置、不自动授信（列表里显式「信任并启用」，与剪贴板导入一致）
+      store.setSettings({ mcpServers: { ...(s.mcpServers ?? {}), [entry.key]: cfg } })
+      return { ok: true }
+    }
+  )
   ipcMain.handle(
     'mcp:connect',
     (_e, id: string, input: { env?: Record<string, string>; extraArgs?: string[] }) => {

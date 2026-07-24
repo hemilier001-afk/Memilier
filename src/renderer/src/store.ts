@@ -84,6 +84,7 @@ interface UIState {
   abort: () => void
   setActiveModel: (model: string) => void
   setActiveMode: (mode: 'auto' | 'plan' | 'chat') => void
+  setActiveApproval: (mode: import('@shared/types').ApprovalMode) => void
   pickActiveWorkspace: () => Promise<void>
   updateSettings: (patch: Partial<Settings>) => Promise<void>
   setSettingsOpen: (open: boolean) => void
@@ -390,6 +391,13 @@ export const useStore = create<UIState>((set, get) => ({
     void window.api.setConversationMode(active.id, mode)
   },
 
+  setActiveApproval: (mode) => {
+    const active = get().active
+    if (!active) return
+    set({ active: { ...active, approvalMode: mode } })
+    void window.api.setConversationApproval(active.id, mode)
+  },
+
   pickActiveWorkspace: async () => {
     const active = get().active
     if (!active) return
@@ -511,7 +519,11 @@ export const useStore = create<UIState>((set, get) => ({
     const active = get().active
     if (!active) return
     try {
-      const content = await window.api.readWorkspaceFile(active.workspaceDir, relPath)
+      // Office/PDF：走主进程提取文本预览（read 出来是二进制乱码）
+      const isOffice = /\.(docx|xlsx|pptx|pdf)$/i.test(relPath)
+      const content = isOffice
+        ? await window.api.extractDocument(active.workspaceDir, relPath)
+        : await window.api.readWorkspaceFile(active.workspaceDir, relPath)
       set({ preview: { path: relPath, content }, rightTab: 'preview', rightPanelOpen: true })
     } catch (e) {
       set({

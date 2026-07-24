@@ -15,7 +15,10 @@ import {
   SearchIcon,
   PencilIcon,
   SparklesIcon,
-  GearIcon
+  GearIcon,
+  ShieldIcon,
+  ShieldOffIcon,
+  SlidersIcon
 } from './icons'
 
 const STARTERS = ['starter1', 'starter2', 'starter3', 'starter4'] as const
@@ -199,25 +202,33 @@ function renderGrouped(
         .join('、')
       const group = [...buf]
       items.push(
-        <details key={`grp-${group[0].id}`} className="pl-10">
-          <summary className="flex cursor-pointer list-none items-center gap-2 py-0.5 text-xs text-muted transition hover:text-fg [&::-webkit-details-marker]:hidden">
-            <GearIcon className="h-3.5 w-3.5" />
-            <span className="truncate">
-              {(t as (k: string) => string)('workedSteps')
-                .replace('{n}', String(steps.length))
-                .replace('{s}', stat)}
-            </span>
-            <span className="shrink-0 opacity-60">▸</span>
-          </summary>
-          <div className="-ml-9 mt-1 space-y-1">
-            {group.map((m) => (
-              <MessageView key={m.id} message={m} />
-            ))}
-          </div>
-        </details>
+        // msg-row：content-visibility 跳过视口外消息的渲染/布局（零依赖虚拟化，长会话流畅）
+        <div className="msg-row" key={`grp-${group[0].id}`}>
+          <details className="pl-10">
+            <summary className="flex cursor-pointer list-none items-center gap-2 py-0.5 text-xs text-muted transition hover:text-fg [&::-webkit-details-marker]:hidden">
+              <GearIcon className="h-3.5 w-3.5" />
+              <span className="truncate">
+                {(t as (k: string) => string)('workedSteps')
+                  .replace('{n}', String(steps.length))
+                  .replace('{s}', stat)}
+              </span>
+              <span className="shrink-0 opacity-60">▸</span>
+            </summary>
+            <div className="-ml-9 mt-1 space-y-1">
+              {group.map((m) => (
+                <MessageView key={m.id} message={m} />
+              ))}
+            </div>
+          </details>
+        </div>
       )
     } else {
-      for (const m of buf) items.push(<MessageView key={m.id} message={m} />)
+      for (const m of buf)
+        items.push(
+          <div className="msg-row" key={m.id}>
+            <MessageView message={m} />
+          </div>
+        )
     }
     buf = []
   }
@@ -228,12 +239,13 @@ function renderGrouped(
     } else {
       flush()
       items.push(
-        <MessageView
-          key={m.id}
-          message={m}
-          isLast={!streaming && m.id === lastAssistantId}
-          onRegenerate={regenerate}
-        />
+        <div className="msg-row" key={m.id}>
+          <MessageView
+            message={m}
+            isLast={!streaming && m.id === lastAssistantId}
+            onRegenerate={regenerate}
+          />
+        </div>
       )
     }
   }
@@ -399,45 +411,168 @@ const MODES: { key: 'auto' | 'plan' | 'chat'; label: string; icon: JSX.Element; 
   }
 ]
 
-function ModeMenu(): JSX.Element {
-  const active = useStore((s) => s.active)
-  const setActiveMode = useStore((s) => s.setActiveMode)
+// 审批预设（对齐 Codex 四挡）。tone 决定按钮的风险色提示：安全默认=中性，越放开越暖。
+const APPROVALS: {
+  key: 'ask' | 'auto' | 'full' | 'custom'
+  label: string
+  desc: string
+  icon: JSX.Element
+  tone: 'neutral' | 'soft' | 'warn'
+}[] = [
+  {
+    key: 'ask',
+    label: 'apAsk',
+    desc: 'apAskDesc',
+    icon: <ShieldIcon className="h-3.5 w-3.5" />,
+    tone: 'neutral'
+  },
+  {
+    key: 'auto',
+    label: 'apAuto',
+    desc: 'apAutoDesc',
+    icon: <ZapIcon className="h-3.5 w-3.5" />,
+    tone: 'soft'
+  },
+  {
+    key: 'full',
+    label: 'apFull',
+    desc: 'apFullDesc',
+    icon: <ShieldOffIcon className="h-3.5 w-3.5" />,
+    tone: 'warn'
+  },
+  {
+    key: 'custom',
+    label: 'apCustom',
+    desc: 'apCustomDesc',
+    icon: <SlidersIcon className="h-3.5 w-3.5" />,
+    tone: 'neutral'
+  }
+]
+
+// 通用弹出菜单壳：一个紧凑触发按钮 + 上浮选项列表（模式菜单与审批菜单共用）
+function PopMenu({
+  trigger,
+  title,
+  children
+}: {
+  trigger: JSX.Element
+  title: string
+  children: (close: () => void) => JSX.Element
+}): JSX.Element {
   const [open, setOpen] = useState(false)
-  const t = useT() as unknown as (k: string) => string
-  const cur = MODES.find((m) => m.key === (active?.mode ?? 'auto')) ?? MODES[0]
   return (
     <div className="relative">
       <button
         onClick={() => setOpen((v) => !v)}
         className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-muted transition hover:bg-surface-2 hover:text-fg"
-        title={t('modeTitle')}
+        title={title}
       >
-        {cur.icon} {t(cur.label)} <span className="text-[10px]">▾</span>
+        {trigger} <span className="text-[10px]">▾</span>
       </button>
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
           <div className="absolute bottom-full left-0 z-20 mb-1 w-56 rounded-lg border border-line bg-surface py-1 shadow-lg">
-            {MODES.map((m) => (
-              <button
-                key={m.key}
-                onClick={() => {
-                  setActiveMode(m.key)
-                  setOpen(false)
-                }}
-                className={`block w-full px-3 py-1.5 text-left text-xs transition hover:bg-surface-2 ${
-                  cur.key === m.key ? 'text-accent' : 'text-fg'
-                }`}
-              >
-                <div className="flex items-center gap-1.5 font-medium">
-                  {m.icon} {t(m.label)}
-                </div>
-                <div className="text-muted">{t(m.desc)}</div>
-              </button>
-            ))}
+            {children(() => setOpen(false))}
           </div>
         </>
       )}
+    </div>
+  )
+}
+
+// 运行模式：自动 / 计划 / 对话（决定智能体“能用哪些工具”）
+function ModeMenu(): JSX.Element {
+  const active = useStore((s) => s.active)
+  const setActiveMode = useStore((s) => s.setActiveMode)
+  const t = useT() as unknown as (k: string) => string
+  const cur = MODES.find((m) => m.key === (active?.mode ?? 'auto')) ?? MODES[0]
+  return (
+    <PopMenu
+      title={t('modeTitle')}
+      trigger={
+        <>
+          {cur.icon} {t(cur.label)}
+        </>
+      }
+    >
+      {(close) => (
+        <>
+          {MODES.map((m) => (
+            <button
+              key={m.key}
+              onClick={() => {
+                setActiveMode(m.key)
+                close()
+              }}
+              className={`block w-full px-3 py-1.5 text-left text-xs transition hover:bg-surface-2 ${
+                cur.key === m.key ? 'text-accent' : 'text-fg'
+              }`}
+            >
+              <div className="flex items-center gap-1.5 font-medium">
+                {m.icon} {t(m.label)}
+              </div>
+              <div className="text-muted">{t(m.desc)}</div>
+            </button>
+          ))}
+        </>
+      )}
+    </PopMenu>
+  )
+}
+
+// 审批预设：请求批准 / 替我审批 / 完全访问 / 自定义（决定“要不要逐个弹框确认”）。
+// 与运行模式拆成两个独立控件（参考 Claude 的分离式控件），互不混淆。
+function ApprovalMenu(): JSX.Element {
+  const active = useStore((s) => s.active)
+  const setActiveApproval = useStore((s) => s.setActiveApproval)
+  const settings = useStore((s) => s.settings)
+  const t = useT() as unknown as (k: string) => string
+  const curKey = active?.approvalMode ?? settings?.approvalMode ?? 'ask'
+  const cur = APPROVALS.find((a) => a.key === curKey) ?? APPROVALS[0]
+  // 非默认审批姿态给出颜色提示：完全访问=暖警示，替我审批=淡强调，其余中性
+  const toneCls =
+    cur.tone === 'warn'
+      ? 'text-amber-600 hover:bg-amber-500/10'
+      : cur.tone === 'soft'
+        ? 'text-accent'
+        : 'text-muted hover:text-fg'
+  return (
+    <div className="relative">
+      <PopMenu
+        title={t('apTitle')}
+        trigger={
+          <span className={`flex items-center gap-1 ${toneCls}`}>
+            {cur.icon} {t(cur.label)}
+          </span>
+        }
+      >
+        {(close) => (
+          <>
+            <div className="px-3 pb-0.5 pt-1 text-[10px] font-medium uppercase tracking-wide text-muted">
+              {t('apTitle')}
+            </div>
+            {APPROVALS.map((a) => (
+              <button
+                key={a.key}
+                onClick={() => {
+                  setActiveApproval(a.key)
+                  close()
+                }}
+                className={`block w-full px-3 py-1.5 text-left text-xs transition hover:bg-surface-2 ${
+                  curKey === a.key ? 'text-accent' : 'text-fg'
+                }`}
+                title={t(a.desc)}
+              >
+                <div className="flex items-center gap-1.5 font-medium">
+                  {a.icon} {t(a.label)}
+                </div>
+                <div className="text-muted">{t(a.desc)}</div>
+              </button>
+            ))}
+          </>
+        )}
+      </PopMenu>
     </div>
   )
 }
@@ -643,7 +778,7 @@ function Composer(): JSX.Element {
     ...customCmds.map((c) => ({
       id: c.name.toLowerCase(),
       label: `/${c.name}`,
-      desc: c.description || '自定义命令',
+      desc: c.description || t('customCmd'),
       run: () => send(c.body)
     })),
     {
@@ -810,6 +945,38 @@ function Composer(): JSX.Element {
         // 非图片文件：仅接受文本类文件（按 MIME/扩展名白名单），避免二进制读成乱码插入
         const TEXT_EXT =
           /\.(md|txt|json|csv|tsv|log|js|ts|tsx|jsx|py|java|c|cpp|h|html?|css|xml|ya?ml|toml|ini|sh|sql|rs|go|rb|vue|svelte)$/i
+        // 旧版二进制格式：明确指引（不静默忽略、也不读成乱码）
+        const LEGACY_EXT = /\.(doc|xls|ppt)$/i
+        for (const f of dropped) {
+          if (LEGACY_EXT.test(f.name)) {
+            setText(
+              (t) =>
+                `${t}\n\n[附加文档：${f.name}]（旧版二进制格式不支持：请先另存为 .docx/.xlsx/.pptx）\n`
+            )
+          }
+        }
+        // Office/PDF 文档：主进程提取纯文本后作为附件插入（对齐 Claude 的文档上传体验）
+        const OFFICE_EXT = /\.(docx|xlsx|pptx|pdf)$/i
+        for (const f of dropped) {
+          if (OFFICE_EXT.test(f.name) && f.size <= 20 * 1024 * 1024) {
+            const abs = (f as File & { path?: string }).path
+            if (!abs) continue
+            void window.api
+              .extractDocumentPath(abs)
+              .then((content) => {
+                const clipped =
+                  content.length > 100_000 ? `${content.slice(0, 100_000)}\n…（已截断）` : content
+                setText((t) => `${t}\n\n[附加文档：${f.name}]\n\`\`\`\n${clipped}\n\`\`\`\n`)
+                resize()
+              })
+              .catch((err) =>
+                setText(
+                  (t) =>
+                    `${t}\n\n[附加文档：${f.name}]（提取失败：${String(err?.message ?? err)}）\n`
+                )
+              )
+          }
+        }
         for (const f of dropped) {
           if (f.type.startsWith('image/') || f.size > 5 * 1024 * 1024) continue
           if (!f.type.startsWith('text/') && !TEXT_EXT.test(f.name)) continue
@@ -979,6 +1146,7 @@ function Composer(): JSX.Element {
                 onImage={(url) => setImages((prev) => [...prev, url])}
               />
               <ModeMenu />
+              <ApprovalMenu />
               <MicButton onAppend={(t) => onChange(text + t)} />
             </div>
             <div className="flex items-center gap-2">

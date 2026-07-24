@@ -132,3 +132,43 @@ export const PinIcon = (p: IconProps) => (
     <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16h14v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1z" />
   </Svg>
 )
+
+// 审批预设控件用：盾牌（安全姿态一眼可见）
+export const ShieldIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+  </Svg>
+)
+
+// 完全访问用：盾牌带斜杠（防护解除，暖警示色）
+export const ShieldOffIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M19.7 14a8.5 8.5 0 0 0 .3-2V5l-8-3-3.2 1.2" />
+    <path d="M4.7 4.7 4 5v7c0 6 8 10 8 10a15.3 15.3 0 0 0 4.3-2.8" />
+    <line x1="2" y1="2" x2="22" y2="22" />
+  </Svg>
+)
+
+// 自定义策略用：滑块
+export const SlidersIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <line x1="4" y1="21" x2="4" y2="14" />
+    <line x1="4" y1="10" x2="4" y2="3" />
+    <line x1="12" y1="21" x2="12" y2="12" />
+    <line x1="12" y1="8" x2="12" y2="3" />
+    <line x1="20" y1="21" x2="20" y2="16" />
+    <line x1="20" y1="12" x2="20" y2="3" />
+    <line x1="1" y1="14" x2="7" y2="14" />
+    <line x1="9" y1="8" x2="15" y2="8" />
+    <line x1="17" y1="16" x2="23" y2="16" />
+  </Svg>
+)
+
+// 品牌图标：与 app 图标（build/icon）严格一致——珊瑚圆角方块底 + 奶白圆环。
+// 注意不要用 Svg 包装（那会套用 currentColor 描边）；这里是实心配色的品牌标。
+export const BrandIcon = ({ className }: { className?: string }): JSX.Element => (
+  <svg viewBox="0 0 100 100" className={className} aria-hidden="true">
+    <rect x="6" y="6" width="88" height="88" rx="22" fill="#D2552C" />
+    <circle cx="50" cy="50" r="29" fill="none" stroke="#FBF3EA" strokeWidth="12" />
+  </svg>
+)

@@ -52,3 +52,35 @@ export function isPrivateIp(ipRaw: string): boolean {
   if (/^f[cd]/.test(ip) || /^fe80/.test(ip)) return true
   return false
 }
+
+// ---------------- 权限预设策略（纯函数，有单测） ----------------
+import type { ApprovalMode, CustomPolicy, PolicyCategory } from '../../shared/types'
+
+/** 工具 → 策略类别。browser_* 归入 network（浏览器组整体视作联网面）。 */
+export function toolCategory(
+  name: string,
+  sideEffect: 'none' | 'write' | 'exec',
+  isMcp: boolean
+): PolicyCategory {
+  if (isMcp) return 'mcp'
+  if (sideEffect === 'none') return 'read'
+  if (name === 'run_command') return 'command'
+  if (name === 'fetch_url' || name === 'web_search' || name.startsWith('browser_')) return 'network'
+  if (name === 'add_memory' || name === 'forget_memory' || name === 'save_skill')
+    return 'memorySkill'
+  return 'fileWrite'
+}
+
+/** 预设 → 该类别是否免确认。返回 'ask' 时落回权限网关既有逻辑（只读自动放行/记住/弹框）。
+ *  危险命令(forcePrompt)与 deny 规则在调用方先行判定，不进本函数——任何预设都压不掉它们。 */
+export function presetDecision(
+  mode: ApprovalMode,
+  category: PolicyCategory,
+  custom?: CustomPolicy
+): 'auto' | 'ask' {
+  if (mode === 'full') return 'auto'
+  if (category === 'read') return 'ask' // read 由 autoApproveReadOnly 既有开关管
+  if (mode === 'ask') return 'ask'
+  if (mode === 'auto') return category === 'mcp' ? 'ask' : 'auto' // 第三方 MCP 仍逐项确认
+  return custom?.[category] ?? 'ask'
+}

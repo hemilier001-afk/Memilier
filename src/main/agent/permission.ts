@@ -41,30 +41,43 @@ export class PermissionManager {
     tc: ToolCall,
     sideEffect: SideEffect,
     description: string,
+    forcePrompt = false,
+    signal?: AbortSignal
+  ): Promise<boolean> {
+    return this.requestEx(tc, sideEffect, description, forcePrompt, signal).then((r) => r.approved)
+  }
+
+  /** 同 request，但带上「依据」（供审计日志区分 无人值守/只读自动/已记住/用户点头） */
+  requestEx(
+    tc: ToolCall,
+    sideEffect: SideEffect,
+    description: string,
     /** 强制弹框：危险操作即使被自动放行/已记住也要再确认 */
     forcePrompt = false,
     /** 本次运行的中断信号：运行被中止时挂起的授权请求自动按“拒绝”解决，避免会话永久卡死 */
     signal?: AbortSignal
-  ): Promise<boolean> {
+  ): Promise<{ approved: boolean; via: 'unattended' | 'readonly' | 'remembered' | 'user' }> {
     // 无人值守（后台例程）：普通工具自动放行，但危险操作（forcePrompt）直接拒绝而非放行
-    if (this.autoApproveAll) return Promise.resolve(!forcePrompt)
+    if (this.autoApproveAll) return Promise.resolve({ approved: !forcePrompt, via: 'unattended' })
     if (!forcePrompt && sideEffect === 'none' && this.getSettings().autoApproveReadOnly) {
-      return Promise.resolve(true)
+      return Promise.resolve({ approved: true, via: 'readonly' })
     }
     const key = rememberKey(tc, sideEffect)
-    if (!forcePrompt && this.remembered.has(key)) return Promise.resolve(true)
-    if (signal?.aborted) return Promise.resolve(false)
+    if (!forcePrompt && this.remembered.has(key)) {
+      return Promise.resolve({ approved: true, via: 'remembered' })
+    }
+    if (signal?.aborted) return Promise.resolve({ approved: false, via: 'user' })
     const id = randomUUID()
-    return new Promise<boolean>((resolve) => {
+    return new Promise<{ approved: boolean; via: 'user' }>((resolve) => {
       const onAbort = (): void => {
-        if (this.pending.delete(id)) resolve(false)
+        if (this.pending.delete(id)) resolve({ approved: false, via: 'user' })
       }
       signal?.addEventListener('abort', onAbort, { once: true })
       this.pending.set(id, {
         key,
         resolve: (approved) => {
           signal?.removeEventListener('abort', onAbort)
-          resolve(approved)
+          resolve({ approved, via: 'user' })
         }
       })
       this.send({ id, toolName: tc.name, args: tc.args, description })

@@ -64,6 +64,13 @@ body {
   background: var(--accent-soft);
 }
 
+/* 消息行零依赖虚拟化：视口外的消息跳过渲染/布局，长会话滚动与重渲染更省。
+   contain-intrinsic-size 给未渲染行一个占位高度，避免滚动条跳动。 */
+.msg-row {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 120px;
+}
+
 /* 简易 Markdown 排版（未引入 typography 插件）。字号/行高对齐 Claude：15px 正文 + 宽松行距 */
 .md {
   font-size: 0.9375rem; /* 15px */

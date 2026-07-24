@@ -12,7 +12,8 @@ import {
   GearIcon,
   FolderIcon,
   SearchIcon,
-  PinIcon
+  PinIcon,
+  BrandIcon
 } from './icons'
 
 const NAV: { key: View; label: string; icon: JSX.Element }[] = [
@@ -123,7 +124,7 @@ function ConvRow({ c }: { c: Conversation }): JSX.Element {
               void assignConversation(c.id, inActiveProject ? null : activeProjectId)
             }}
             className="text-muted hover:text-accent"
-            title={inActiveProject ? '移出当前项目' : '移入当前项目'}
+            title={inActiveProject ? t('projMoveOut') : t('projMoveIn')}
           >
             <FolderIcon className="h-3.5 w-3.5" />
           </button>
@@ -222,10 +223,10 @@ function Projects(): JSX.Element {
           <button
             onClick={(e) => {
               e.stopPropagation()
-              if (confirm(`删除项目「${p.name}」？其对话会变为未分组。`)) void deleteProject(p.id)
+              if (confirm(t('projDeleteConfirm').replace('{n}', p.name))) void deleteProject(p.id)
             }}
             className="ml-2 hidden shrink-0 text-muted hover:text-red-500 group-hover:block"
-            title="删除项目"
+            title={t('projDelete')}
           >
             ✕
           </button>
@@ -299,7 +300,7 @@ export function Sidebar(): JSX.Element {
       <aside className="region-drag flex w-14 flex-col items-center gap-1 border-r border-line bg-paper pb-2 pt-10">
         <button
           onClick={() => setCollapsed(false)}
-          title="展开侧栏"
+          title={t('sbExpand')}
           className="flex h-10 w-10 items-center justify-center rounded-lg text-muted transition hover:bg-surface-2 hover:text-fg"
         >
           ☰
@@ -340,10 +341,13 @@ export function Sidebar(): JSX.Element {
   return (
     <aside className="flex w-64 flex-col border-r border-line bg-paper">
       <div className="region-drag flex items-center justify-between px-3 pb-1 pt-10">
-        <span className="px-1 text-sm font-semibold text-fg">{t('brandName')}</span>
+        <span className="flex items-center gap-1.5 px-1 text-sm font-semibold text-fg">
+          <BrandIcon className="h-4 w-4" />
+          {t('brandName')}
+        </span>
         <button
           onClick={() => setCollapsed(true)}
-          title="折叠侧栏"
+          title={t('sbCollapse')}
           className="rounded-md p-1 text-muted transition hover:bg-surface-2 hover:text-fg"
         >
           ☰

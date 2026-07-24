@@ -1,13 +1,17 @@
 import { useEffect, useState } from 'react'
-import type {
-  AgentInfo,
-  McpConnectorInfo,
-  PluginCatalogItem,
-  PluginInfo,
-  ProviderConfig,
-  SkillInfo
-} from '@shared/types'
+import type { AgentInfo, ProviderConfig, SkillInfo } from '@shared/types'
 import { useStore } from '../store'
+import { ExtensionsPanel } from './ExtensionsPanel'
+import { AppIcon, StatusDot, Toggle } from './ui'
+import {
+  UsersIcon,
+  SparklesIcon,
+  ShieldIcon,
+  ShieldOffIcon,
+  ZapIcon,
+  SlidersIcon,
+  BrandIcon
+} from './icons'
 import { useT } from '../i18n'
 
 const PROVIDER_PRESETS: Record<string, { label: string; baseUrl: string; models: string }> = {
@@ -29,10 +33,13 @@ const PROVIDER_PRESETS: Record<string, { label: string; baseUrl: string; models:
   custom: { label: '自定义 / Custom', baseUrl: '', models: '' }
 }
 
-type Cat = 'general' | 'models' | 'voice' | 'mcp' | 'skills' | 'shortcuts' | 'about'
+type Cat = 'general' | 'models' | 'voice' | 'security' | 'mcp' | 'skills' | 'shortcuts' | 'about'
 
 const input =
-  'w-full rounded-md border border-line bg-transparent px-2 py-1.5 outline-none focus:border-accent'
+  'w-full rounded-lg border border-line bg-surface/60 px-3 py-2 outline-none transition focus:border-accent focus:bg-surface'
+// 区块标题：统一的分节标签样式，加大下边距让排版更舒展（借鉴 Claude/Codex 设置页的留白）
+const label = 'mb-1.5 block text-[13px] font-medium text-fg'
+const hint = 'mt-1.5 text-xs leading-relaxed text-muted'
 
 export function SettingsModal(): JSX.Element | null {
   const t = useT()
@@ -43,46 +50,26 @@ export function SettingsModal(): JSX.Element | null {
   const update = useStore((s) => s.updateSettings)
 
   const [cat, setCat] = useState<Cat>('general')
-  const [mcpText, setMcpText] = useState('')
-  const [mcpError, setMcpError] = useState<string | null>(null)
   const [skills, setSkills] = useState<SkillInfo[]>([])
   const [agents, setAgents] = useState<AgentInfo[]>([])
-  const [plugins, setPlugins] = useState<PluginInfo[]>([])
   const [providers, setProviders] = useState<ProviderConfig[]>([])
-  const [mcpStatus, setMcpStatus] = useState<
-    | {
-        name: string
-        ok: boolean
-        toolCount: number
-        error?: string
-        untrusted?: boolean
-        source?: 'user' | 'plugin'
-      }[]
-    | null
-  >(null)
-  const [mcpTesting, setMcpTesting] = useState(false)
-  const [pluginMsg, setPluginMsg] = useState<string | null>(null)
-  const [catalog, setCatalog] = useState<PluginCatalogItem[]>([])
-  const [connectors, setConnectors] = useState<McpConnectorInfo[]>([])
-  const [connectForm, setConnectForm] = useState<string | null>(null)
-  const [connectEnv, setConnectEnv] = useState<Record<string, string>>({})
-  const [connectArgs, setConnectArgs] = useState<string[]>([])
-  const [connectMsg, setConnectMsg] = useState<string | null>(null)
-  const [importMsg, setImportMsg] = useState<string | null>(null)
+  const [auditRows, setAuditRows] = useState<import('@shared/types').AuditEntry[]>([])
+  const [appVersion, setAppVersion] = useState('')
 
   useEffect(() => {
     if (open) {
       const s = useStore.getState().settings
-      setMcpText(JSON.stringify(s?.mcpServers ?? {}, null, 2))
       setProviders(s?.providers ?? [])
-      setMcpError(null)
       void window.api.listSkills().then(setSkills)
       void window.api.listAgents(useStore.getState().settings?.workspaceDir ?? '').then(setAgents)
-      void window.api.listPlugins().then(setPlugins)
-      void window.api.pluginCatalog().then(setCatalog)
-      void window.api.mcpCatalog().then(setConnectors)
+      void window.api.appVersion().then(setAppVersion)
     }
   }, [open])
+
+  // 审计日志按需加载：切到安全页时取最近 50 条
+  useEffect(() => {
+    if (open && cat === 'security') void window.api.auditList(50).then(setAuditRows)
+  }, [open, cat])
 
   const persistProviders = (next: ProviderConfig[]): void => {
     void update({ providers: next })
@@ -112,118 +99,27 @@ export function SettingsModal(): JSX.Element | null {
     setProviders(next)
     persistProviders(next)
   }
-  const togglePlugin = async (name: string, enabled: boolean): Promise<void> => {
-    await window.api.setPluginEnabled(name, enabled)
-    setPlugins(await window.api.listPlugins())
-  }
 
   const [verifyMsg, setVerifyMsg] = useState<Record<string, string>>({})
+  const [backupMsg, setBackupMsg] = useState<string | null>(null)
   const verifyProvider = async (id: string): Promise<void> => {
     setVerifyMsg((m) => ({ ...m, [id]: t('verifying') }))
     const r = await window.api.testProvider(id)
     setVerifyMsg((m) => ({ ...m, [id]: r.ok ? `✓ ${r.note ?? t('verifyOk')}` : `✗ ${r.error}` }))
   }
 
-  const testMcp = async (): Promise<void> => {
-    setMcpTesting(true)
-    setMcpStatus(null)
-    try {
-      setMcpStatus(await window.api.mcpStatus())
-    } finally {
-      setMcpTesting(false)
-    }
-  }
-
-  /** 接入/启停/删除/导入后统一刷新：设置、JSON 文本、目录 installed 标记、探活 */
-  const refreshMcpAll = async (): Promise<void> => {
-    const s = await window.api.getSettings()
-    useStore.setState({ settings: s })
-    setMcpText(JSON.stringify(s.mcpServers ?? {}, null, 2))
-    setConnectors(await window.api.mcpCatalog())
-    await testMcp()
-  }
-  const beginConnect = (c: McpConnectorInfo): void => {
-    // 无需填写任何字段的连接器：点了直接接入
-    if (!(c.envFields?.length || c.argFields?.length)) {
-      void window.api.mcpConnect(c.id, {}).then((r) => {
-        if (r.ok) void refreshMcpAll()
-      })
-      return
-    }
-    setConnectForm(c.id)
-    setConnectEnv({})
-    setConnectArgs([])
-    setConnectMsg(null)
-  }
-  const doConnect = async (c: McpConnectorInfo): Promise<void> => {
-    setConnectMsg(null)
-    const r = await window.api.mcpConnect(c.id, { env: connectEnv, extraArgs: connectArgs })
-    if (!r.ok) {
-      setConnectMsg(r.error ?? 'failed')
-      return
-    }
-    setConnectForm(null)
-    await refreshMcpAll()
-  }
-  const importFromClipboard = async (): Promise<void> => {
-    setImportMsg(null)
-    const text = await window.api.readClipboardText()
-    const r = await window.api.mcpImport(text)
-    setImportMsg(
-      r.ok ? `✓ ${t('mcpImported').replace('{n}', String(r.added ?? 0))}` : `✗ ${r.error}`
-    )
-    if (r.ok) await refreshMcpAll()
-  }
-
-  const installPlugin = async (): Promise<void> => {
-    setPluginMsg(null)
-    const r = await window.api.installPlugin()
-    if (r.ok) {
-      setPluginMsg(`✓ ${t('pluginInstalled').replace('{n}', r.name ?? '')}`)
-      setPlugins(await window.api.listPlugins())
-    } else if (r.error) {
-      setPluginMsg(`✗ ${r.error}`)
-    }
-  }
-  const refreshPluginLists = async (): Promise<void> => {
-    setCatalog(await window.api.pluginCatalog())
-    setPlugins(await window.api.listPlugins())
-  }
-  const installCatalog = async (id: string): Promise<void> => {
-    setPluginMsg(null)
-    const r = await window.api.installCatalogPlugin(id)
-    if (r.ok) setPluginMsg(`✓ ${t('pluginInstalled').replace('{n}', r.name ?? '')}`)
-    else if (r.error) setPluginMsg(`✗ ${r.error}`)
-    await refreshPluginLists()
-  }
-  const uninstallCatalog = async (id: string): Promise<void> => {
-    await window.api.uninstallPlugin(id)
-    await refreshPluginLists()
-  }
   const pickWorkspace = async (): Promise<void> => {
     const dir = await window.api.pickWorkspace()
     if (dir) await update({ workspaceDir: dir })
   }
-  const saveMcp = (): void => {
-    try {
-      const parsed = JSON.parse(mcpText || '{}')
-      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-        throw new Error('顶层需为 JSON 对象 / top-level must be an object')
-      }
-      setMcpError(null)
-      void update({ mcpServers: parsed })
-    } catch (e) {
-      setMcpError(e instanceof Error ? e.message : 'JSON error')
-    }
-  }
-
   if (!open || !settings) return null
 
   const CATS: { key: Cat; label: string; icon: string }[] = [
     { key: 'general', label: t('setGeneral'), icon: '⚙' },
     { key: 'models', label: t('setModels'), icon: '🧠' },
     { key: 'voice', label: t('setVoice'), icon: '🎤' },
-    { key: 'mcp', label: t('setMcp'), icon: '🧩' },
+    { key: 'security', label: t('setSecurity'), icon: '🛡' },
+    { key: 'mcp', label: t('extTitle'), icon: '🧩' },
     { key: 'skills', label: t('setSkills'), icon: '✨' },
     { key: 'shortcuts', label: t('setShortcuts'), icon: '⌨' },
     { key: 'about', label: t('setAbout'), icon: 'ℹ' }
@@ -237,20 +133,22 @@ export function SettingsModal(): JSX.Element | null {
   )
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40">
-      <div className="flex h-[560px] max-h-[88vh] w-[760px] max-w-[94vw] overflow-hidden rounded-xl border border-line bg-surface text-fg shadow-xl">
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30 backdrop-blur-sm">
+      <div className="flex h-[620px] max-h-[90vh] w-[840px] max-w-[94vw] overflow-hidden rounded-2xl border border-line bg-paper text-fg shadow-2xl">
         {/* 左侧分类菜单 */}
-        <nav className="flex w-44 shrink-0 flex-col gap-0.5 border-r border-line bg-surface-2 p-2">
-          <div className="px-2 pb-2 pt-1 text-sm font-semibold">{t('settings')}</div>
+        <nav className="flex w-52 shrink-0 flex-col gap-0.5 border-r border-line bg-surface-2/60 p-3">
+          <div className="px-2 pb-3 pt-1.5 text-[15px] font-semibold">{t('settings')}</div>
           {CATS.map((c) => (
             <button
               key={c.key}
               onClick={() => setCat(c.key)}
-              className={`flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm transition ${
-                cat === c.key ? 'bg-accent-soft text-accent' : 'text-fg hover:bg-surface'
+              className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm transition ${
+                cat === c.key
+                  ? 'bg-accent-soft font-medium text-accent'
+                  : 'text-muted hover:bg-accent-soft/50 hover:text-fg'
               }`}
             >
-              <span>{c.icon}</span>
+              <span className="text-base">{c.icon}</span>
               {c.label}
             </button>
           ))}
@@ -258,18 +156,21 @@ export function SettingsModal(): JSX.Element | null {
 
         {/* 右侧内容 */}
         <div className="flex min-w-0 flex-1 flex-col">
-          <div className="flex items-center justify-between border-b border-line px-5 py-3">
-            <h2 className="text-base font-semibold">{CATS.find((c) => c.key === cat)?.label}</h2>
-            <button onClick={() => setOpen(false)} className="text-muted hover:text-fg">
+          <div className="flex items-center justify-between px-8 py-5">
+            <h2 className="text-lg font-semibold">{CATS.find((c) => c.key === cat)?.label}</h2>
+            <button
+              onClick={() => setOpen(false)}
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-muted transition hover:bg-surface-2 hover:text-fg"
+            >
               ✕
             </button>
           </div>
 
-          <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-5 text-sm">
+          <div className="min-h-0 flex-1 space-y-7 overflow-y-auto px-8 pb-8 pt-1 text-sm">
             {cat === 'general' && (
               <>
                 <div>
-                  <label className="mb-1 block font-medium">{t('profileSection')}</label>
+                  <label className={label}>{t('profileSection')}</label>
                   <div className="flex gap-2">
                     <input
                       key={`pname-${settings.profile?.name ?? ''}`}
@@ -294,10 +195,10 @@ export function SettingsModal(): JSX.Element | null {
                       className={input}
                     />
                   </div>
-                  <p className="mt-1 text-xs text-muted">{t('profileNamePh')}</p>
+                  <p className={hint}>{t('profileNamePh')}</p>
                 </div>
                 <div>
-                  <label className="mb-1 block font-medium">{t('language')}</label>
+                  <label className={label}>{t('language')}</label>
                   <select
                     value={settings.language}
                     onChange={(e) => void update({ language: e.target.value as 'zh' | 'en' })}
@@ -306,17 +207,17 @@ export function SettingsModal(): JSX.Element | null {
                     <option value="zh">中文</option>
                     <option value="en">English</option>
                   </select>
-                  <p className="mt-1 text-xs text-muted">
+                  <p className={hint}>
                     English 界面覆盖主要区域；较新的功能界面暂以中文为准，将逐步补全。
                   </p>
                 </div>
                 <div>
-                  <label className="mb-1 block font-medium">{t('backupTitle')}</label>
+                  <label className={label}>{t('backupTitle')}</label>
                   <div className="flex gap-2">
                     <button
                       onClick={() =>
                         void window.api.exportData().then((r) => {
-                          if (r.ok) setPluginMsg(t('exportedToast'))
+                          if (r.ok) setBackupMsg(t('exportedToast'))
                         })
                       }
                       className="rounded-md border border-line bg-surface-2 px-3 py-1.5 text-sm text-fg transition hover:bg-accent-soft"
@@ -327,7 +228,7 @@ export function SettingsModal(): JSX.Element | null {
                       onClick={() =>
                         void window.api.importData().then((r) => {
                           if (r.ok) {
-                            setPluginMsg(
+                            setBackupMsg(
                               t('importedToast').replace('{c}', String(r.conversations ?? 0))
                             )
                             void useStore.getState().init()
@@ -339,10 +240,11 @@ export function SettingsModal(): JSX.Element | null {
                       {t('importBtn')}
                     </button>
                   </div>
-                  <p className="mt-1 text-xs text-muted">{t('backupHint')}</p>
+                  {backupMsg && <p className="mt-1 text-xs text-green-500">{backupMsg}</p>}
+                  <p className={hint}>{t('backupHint')}</p>
                 </div>
                 <div>
-                  <label className="mb-1 block font-medium">{t('proxyLabel')}</label>
+                  <label className={label}>{t('proxyLabel')}</label>
                   <input
                     key={`proxy-${settings.proxyUrl ?? ''}`}
                     defaultValue={settings.proxyUrl ?? ''}
@@ -350,11 +252,11 @@ export function SettingsModal(): JSX.Element | null {
                     onBlur={(e) => void update({ proxyUrl: e.target.value.trim() })}
                     className={input}
                   />
-                  <p className="mt-1 text-xs text-muted">{t('proxyHint')}</p>
+                  <p className={hint}>{t('proxyHint')}</p>
                 </div>
                 <div className="flex gap-3">
                   <div className="flex-1">
-                    <label className="mb-1 block font-medium">Temperature</label>
+                    <label className={label}>Temperature</label>
                     <input
                       type="number"
                       step="0.1"
@@ -371,7 +273,7 @@ export function SettingsModal(): JSX.Element | null {
                     />
                   </div>
                   <div className="flex-1">
-                    <label className="mb-1 block font-medium">Max tokens</label>
+                    <label className={label}>Max tokens</label>
                     <input
                       type="number"
                       step="256"
@@ -389,7 +291,7 @@ export function SettingsModal(): JSX.Element | null {
                 </div>
                 <p className="text-xs text-muted">{t('temperatureLabel')}</p>
                 <div>
-                  <label className="mb-1 block font-medium">{t('theme')}</label>
+                  <label className={label}>{t('theme')}</label>
                   <select
                     value={settings.theme}
                     onChange={(e) =>
@@ -403,7 +305,7 @@ export function SettingsModal(): JSX.Element | null {
                   </select>
                 </div>
                 <div>
-                  <label className="mb-1 block font-medium">{t('workspaceDir')}</label>
+                  <label className={label}>{t('workspaceDir')}</label>
                   <div className="flex gap-2">
                     <input value={settings.workspaceDir} readOnly className={`${input} truncate`} />
                     <button
@@ -413,7 +315,7 @@ export function SettingsModal(): JSX.Element | null {
                       {t('choose')}
                     </button>
                   </div>
-                  <p className="mt-1 text-xs text-muted">{t('workspaceHint')}</p>
+                  <p className={hint}>{t('workspaceHint')}</p>
                 </div>
                 <label className="flex items-center gap-2">
                   <input
@@ -432,10 +334,10 @@ export function SettingsModal(): JSX.Element | null {
                     />
                     {t('hooksLabel')}
                   </label>
-                  <p className="mt-1 text-xs text-muted">{t('hooksHint')}</p>
+                  <p className={hint}>{t('hooksHint')}</p>
                 </div>
                 <div>
-                  <label className="mb-1 block font-medium">{t('submitKey')}</label>
+                  <label className={label}>{t('submitKey')}</label>
                   <select
                     value={settings.submitKey ?? 'enter'}
                     onChange={(e) =>
@@ -453,7 +355,7 @@ export function SettingsModal(): JSX.Element | null {
             {cat === 'models' && (
               <>
                 <div>
-                  <label className="mb-1 block font-medium">{t('ollamaUrl')}</label>
+                  <label className={label}>{t('ollamaUrl')}</label>
                   <input
                     value={settings.ollamaBaseUrl}
                     onChange={(e) => void update({ ollamaBaseUrl: e.target.value })}
@@ -461,7 +363,7 @@ export function SettingsModal(): JSX.Element | null {
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block font-medium">{t('defaultModel')}</label>
+                  <label className={label}>{t('defaultModel')}</label>
                   <select
                     value={settings.defaultModel}
                     onChange={(e) => void update({ defaultModel: e.target.value })}
@@ -562,7 +464,7 @@ export function SettingsModal(): JSX.Element | null {
 
             {cat === 'voice' && (
               <div>
-                <label className="mb-1 block font-medium">{t('asrTitle')}</label>
+                <label className={label}>{t('asrTitle')}</label>
                 <p className="mb-2 text-xs text-muted">{t('asrHint')}</p>
                 <div className="flex gap-2">
                   <select
@@ -587,353 +489,248 @@ export function SettingsModal(): JSX.Element | null {
               </div>
             )}
 
-            {cat === 'mcp' && (
-              <div className="space-y-5">
-                {/* ① 连接器目录：一键接入 */}
+            {cat === 'security' && (
+              <div className="space-y-6">
+                {/* 默认权限模式（四挡，对齐 Codex 审批口径）；会话内可在模式菜单单独覆盖 */}
                 <div>
-                  <label className="mb-0.5 block font-medium">{t('mcpCatalogTitle')}</label>
-                  <p className="mb-2 text-xs text-muted">{t('mcpCatalogHint')}</p>
-                  <div className="grid grid-cols-2 gap-2">
-                    {connectors.map((c) => (
-                      <div
-                        key={c.id}
-                        className="flex flex-col rounded-lg border border-line bg-surface-2 p-2.5"
-                      >
-                        <div className="flex items-start gap-2">
-                          <span className="text-lg leading-none">{c.icon}</span>
+                  <h3 className="mb-1 text-[13px] font-semibold text-fg">{t('apDefaultLabel')}</h3>
+                  <p className="mb-2.5 text-xs leading-relaxed text-muted">{t('apDefaultHint')}</p>
+                  <div className="space-y-2">
+                    {(['ask', 'auto', 'full', 'custom'] as const).map((k) => {
+                      const Icon =
+                        k === 'ask'
+                          ? ShieldIcon
+                          : k === 'auto'
+                            ? ZapIcon
+                            : k === 'full'
+                              ? ShieldOffIcon
+                              : SlidersIcon
+                      const active = (settings.approvalMode ?? 'ask') === k
+                      const cap = `ap${k[0].toUpperCase()}${k.slice(1)}`
+                      return (
+                        <button
+                          key={k}
+                          onClick={() => void update({ approvalMode: k })}
+                          className={`flex w-full items-center gap-3.5 rounded-xl border px-3.5 py-3 text-left transition ${
+                            active
+                              ? 'border-accent bg-accent-soft'
+                              : 'border-line hover:bg-surface-2'
+                          }`}
+                        >
+                          <AppIcon muted>
+                            <Icon className="h-5 w-5" />
+                          </AppIcon>
                           <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-1.5">
-                              <span className="truncate text-sm font-medium">{c.name}</span>
-                              <span className="rounded bg-surface px-1 text-[10px] text-muted">
-                                {c.category}
-                              </span>
+                            <div className="text-[15px] font-semibold text-fg">
+                              {t(cap as 'apAsk')}
                             </div>
-                            <p className="mt-0.5 text-xs leading-snug text-muted">
-                              {c.description}
-                            </p>
-                          </div>
-                        </div>
-                        {connectForm === c.id ? (
-                          <div className="mt-2 space-y-1.5">
-                            {(c.argFields ?? []).map((f, i) => (
-                              <input
-                                key={f.label}
-                                value={connectArgs[i] ?? ''}
-                                onChange={(e) => {
-                                  const next = [...connectArgs]
-                                  next[i] = e.target.value
-                                  setConnectArgs(next)
-                                }}
-                                placeholder={`${f.label}${f.required ? ' *' : ''}（${f.placeholder}）`}
-                                className="w-full rounded-md border border-line bg-transparent px-2 py-1 text-xs"
-                              />
-                            ))}
-                            {(c.envFields ?? []).map((f) => (
-                              <input
-                                key={f.key}
-                                type={f.secret ? 'password' : 'text'}
-                                value={connectEnv[f.key] ?? ''}
-                                onChange={(e) =>
-                                  setConnectEnv({ ...connectEnv, [f.key]: e.target.value })
-                                }
-                                placeholder={`${f.label}${f.required ? ' *' : ''}`}
-                                className="w-full rounded-md border border-line bg-transparent px-2 py-1 text-xs"
-                              />
-                            ))}
-                            {connectMsg && <p className="text-xs text-red-500">{connectMsg}</p>}
-                            <div className="flex justify-end gap-1.5">
-                              <button
-                                onClick={() => setConnectForm(null)}
-                                className="rounded px-2 py-0.5 text-xs text-muted hover:text-fg"
-                              >
-                                {t('cancel')}
-                              </button>
-                              <button
-                                onClick={() => void doConnect(c)}
-                                className="rounded border border-line bg-surface px-2 py-0.5 text-xs text-fg hover:bg-accent-soft"
-                              >
-                                {t('mcpConnect')}
-                              </button>
+                            <div className="text-xs text-muted">
+                              {t(`${cap}Desc` as 'apAskDesc')}
                             </div>
                           </div>
-                        ) : (
-                          <button
-                            onClick={() => beginConnect(c)}
-                            disabled={c.installed}
-                            className="mt-2 self-end rounded border border-line bg-surface px-2.5 py-0.5 text-xs text-fg transition hover:bg-accent-soft disabled:cursor-default disabled:opacity-60 disabled:hover:bg-surface"
+                          <span
+                            className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[10px] ${
+                              active ? 'border-accent bg-accent text-white' : 'border-line'
+                            }`}
                           >
-                            {c.installed ? `✓ ${t('mcpConnected')}` : t('mcpConnect')}
-                          </button>
-                        )}
-                      </div>
-                    ))}
+                            {active ? '✓' : ''}
+                          </span>
+                        </button>
+                      )
+                    })}
                   </div>
                 </div>
 
-                {/* ② 已安装管理：状态/启停/信任/删除 */}
+                {/* 自定义策略：按类别 自动/询问（仅 custom 模式生效） */}
+                {settings.approvalMode === 'custom' && (
+                  <div>
+                    <h3 className="mb-2 text-[13px] font-semibold text-fg">{t('polTitle')}</h3>
+                    <div className="overflow-hidden rounded-xl border border-line">
+                      {(
+                        [
+                          ['fileWrite', 'polFileWrite'],
+                          ['command', 'polCommand'],
+                          ['network', 'polNetwork'],
+                          ['memorySkill', 'polMemorySkill'],
+                          ['mcp', 'polMcp']
+                        ] as const
+                      ).map(([key, lbl], i) => {
+                        const on = (settings.customPolicy?.[key] ?? 'ask') === 'auto'
+                        return (
+                          <div
+                            key={key}
+                            className={`flex items-center justify-between px-4 py-2.5 ${
+                              i > 0 ? 'border-t border-line' : ''
+                            }`}
+                          >
+                            <span className="text-sm text-fg">{t(lbl)}</span>
+                            <div className="flex items-center gap-2.5">
+                              <span className="text-xs text-muted">
+                                {on ? t('polAuto') : t('polAsk')}
+                              </span>
+                              <Toggle
+                                on={on}
+                                onChange={() =>
+                                  void update({
+                                    customPolicy: {
+                                      ...settings.customPolicy,
+                                      [key]: on ? 'ask' : 'auto'
+                                    }
+                                  })
+                                }
+                              />
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* 命令沙箱（Seatbelt，仅 macOS） */}
+                <div className="flex items-center justify-between gap-4">
+                  <div className="min-w-0">
+                    <div className="text-[15px] font-semibold text-fg">{t('sandboxLabel')}</div>
+                    <p className="mt-0.5 text-xs leading-relaxed text-muted">{t('sandboxHint')}</p>
+                  </div>
+                  <Toggle
+                    on={settings.sandboxCommands ?? true}
+                    onChange={() =>
+                      void update({ sandboxCommands: !(settings.sandboxCommands ?? true) })
+                    }
+                  />
+                </div>
+
+                {/* 审计日志 */}
                 <div>
                   <div className="mb-1 flex items-center justify-between">
-                    <label className="font-medium">{t('mcpTitle')}</label>
+                    <h3 className="text-[13px] font-semibold text-fg">{t('auditTitle')}</h3>
                     <div className="flex gap-2">
                       <button
-                        onClick={() => void importFromClipboard()}
-                        className="rounded-md bg-surface-2 px-2 py-0.5 text-xs"
-                        title={t('mcpImportTip')}
+                        onClick={() => void window.api.auditList(50).then(setAuditRows)}
+                        className="rounded-lg bg-surface-2 px-2.5 py-1 text-xs text-fg transition hover:bg-accent-soft"
                       >
-                        {t('mcpImport')}
+                        {t('auditRefresh')}
                       </button>
                       <button
-                        onClick={testMcp}
-                        disabled={mcpTesting}
-                        className="rounded-md bg-surface-2 px-2 py-0.5 text-xs disabled:opacity-50"
+                        onClick={() => void window.api.auditOpen()}
+                        className="rounded-lg bg-surface-2 px-2.5 py-1 text-xs text-fg transition hover:bg-accent-soft"
                       >
-                        {mcpTesting ? t('mcpTesting') : t('testConnection')}
+                        {t('auditOpenFile')}
                       </button>
                     </div>
                   </div>
-                  {importMsg && <p className="mb-1 text-xs text-muted">{importMsg}</p>}
-                  {mcpStatus && (
-                    <ul className="space-y-1">
-                      {mcpStatus.length === 0 ? (
-                        <li className="text-xs text-muted">{t('mcpNone')}</li>
-                      ) : (
-                        mcpStatus.map((m) => (
-                          <li
-                            key={m.name}
-                            className="flex items-center gap-1.5 rounded-md bg-surface-2 px-2 py-1 text-xs"
+                  <p className="mb-2 text-xs leading-relaxed text-muted">{t('auditHint')}</p>
+                  {auditRows.length === 0 ? (
+                    <p className="rounded-xl border border-dashed border-line px-3 py-6 text-center text-xs text-muted">
+                      {t('auditEmpty')}
+                    </p>
+                  ) : (
+                    <div className="max-h-64 overflow-y-auto overflow-hidden rounded-xl border border-line">
+                      {auditRows.map((a, i) => (
+                        <div
+                          key={`${a.ts}-${i}`}
+                          className={`flex items-center gap-2 px-3 py-2 text-xs ${
+                            i > 0 ? 'border-t border-line' : ''
+                          }`}
+                        >
+                          <StatusDot tone={a.ok === false ? 'off' : 'ok'} />
+                          <span className="shrink-0 text-muted">
+                            {new Date(a.ts).toLocaleTimeString()}
+                          </span>
+                          <span className="font-mono text-fg">{a.tool}</span>
+                          <span className="text-muted">
+                            {t(
+                              ({
+                                preset: 'adPreset',
+                                'rule-allow': 'adRuleAllow',
+                                'rule-deny': 'adRuleDeny',
+                                readonly: 'adReadonly',
+                                remembered: 'adRemembered',
+                                user: a.ok === false ? 'adUserDeny' : 'adUser',
+                                unattended: 'adUnattended',
+                                'hook-block': 'adHookBlock'
+                              }[a.decision] ?? 'adUser') as 'adUser'
+                            )}
+                          </span>
+                          {a.source === 'subagent' && <span className="text-muted">sub</span>}
+                          <span
+                            className="ml-auto shrink-0 truncate text-muted"
+                            title={a.error ?? ''}
                           >
-                            <span
-                              className={
-                                m.untrusted
-                                  ? 'text-amber-500'
-                                  : m.ok
-                                    ? 'text-green-500'
-                                    : settings?.mcpServers?.[m.name]?.enabled === false
-                                      ? 'text-muted'
-                                      : 'text-red-500'
-                              }
-                            >
-                              {m.untrusted ? '⚠' : m.ok ? '●' : '○'}
-                            </span>
-                            <span className="truncate font-mono">{m.name}</span>
-                            {m.source === 'plugin' && (
-                              <span className="rounded bg-surface px-1 text-[10px] text-muted">
-                                {t('mcpFromPlugin')}
-                              </span>
-                            )}
-                            {m.untrusted ? (
-                              <span className="text-amber-500">{t('mcpNeedsTrust')}</span>
-                            ) : m.ok ? (
-                              <span className="text-muted">
-                                {t('mcpTools').replace('{n}', String(m.toolCount))}
-                              </span>
-                            ) : settings?.mcpServers?.[m.name]?.enabled === false ? (
-                              <span className="text-muted">{t('mcpDisabled')}</span>
-                            ) : (
-                              <span className="truncate text-red-500">{m.error}</span>
-                            )}
-                            <span className="ml-auto flex shrink-0 items-center gap-1.5">
-                              {m.untrusted && (
-                                <button
-                                  onClick={() =>
-                                    void window.api.trustMcp(m.name).then(() => void testMcp())
-                                  }
-                                  className="rounded border border-line px-2 py-0.5 text-fg hover:bg-accent-soft"
-                                >
-                                  {t('mcpTrust')}
-                                </button>
-                              )}
-                              {m.source === 'user' && !m.untrusted && (
-                                <label
-                                  className="flex cursor-pointer items-center gap-1 text-muted"
-                                  title={t('mcpEnabledTip')}
-                                >
-                                  <input
-                                    type="checkbox"
-                                    checked={settings?.mcpServers?.[m.name]?.enabled !== false}
-                                    onChange={(e) =>
-                                      void window.api
-                                        .mcpSetEnabled(m.name, e.target.checked)
-                                        .then(() => void refreshMcpAll())
-                                    }
-                                  />
-                                </label>
-                              )}
-                              {m.source === 'user' && (
-                                <button
-                                  onClick={() => {
-                                    if (confirm(t('mcpRemoveConfirm').replace('{name}', m.name)))
-                                      void window.api
-                                        .mcpRemove(m.name)
-                                        .then(() => void refreshMcpAll())
-                                  }}
-                                  className="text-muted hover:text-red-500"
-                                  title={t('deleteChat')}
-                                >
-                                  ✕
-                                </button>
-                              )}
-                            </span>
-                          </li>
-                        ))
-                      )}
-                    </ul>
+                            {a.error ? a.error.slice(0, 40) : a.ms != null ? `${a.ms}ms` : ''}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
                   )}
                 </div>
-
-                {/* ③ 高级：手动 JSON（折叠） */}
-                <details>
-                  <summary className="cursor-pointer text-xs text-muted hover:text-fg">
-                    {t('mcpAdvanced')}
-                  </summary>
-                  <div className="mt-2">
-                    <textarea
-                      value={mcpText}
-                      onChange={(e) => setMcpText(e.target.value)}
-                      onBlur={saveMcp}
-                      rows={10}
-                      spellCheck={false}
-                      className="w-full rounded-md border border-line bg-transparent p-2 font-mono text-xs"
-                    />
-                    {mcpError ? (
-                      <p className="mt-1 text-xs text-red-500">JSON: {mcpError}</p>
-                    ) : (
-                      <p className="mt-1 whitespace-pre-wrap break-all text-xs text-muted">
-                        {
-                          'stdio: { "fs": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "PATH"] } }\n'
-                        }
-                        {'http: { "remote": { "url": "https://example.com/mcp", "type": "http" } }'}
-                      </p>
-                    )}
-                  </div>
-                </details>
               </div>
             )}
 
+            {cat === 'mcp' && <ExtensionsPanel />}
+
             {cat === 'skills' && (
-              <>
+              <div className="space-y-6">
                 <div>
-                  <label className="mb-1 block font-medium">🛒 {t('marketplace')}</label>
-                  <div className="grid grid-cols-2 gap-2">
-                    {catalog.map((c) => (
-                      <div
-                        key={c.id}
-                        className="flex flex-col rounded-lg border border-line bg-surface-2 p-2"
-                      >
-                        <div className="flex items-start gap-2">
-                          <span className="text-lg leading-none">{c.icon}</span>
-                          <div className="min-w-0 flex-1">
-                            <div className="truncate text-sm font-medium">{c.name}</div>
-                            <p className="text-xs text-muted">{c.description}</p>
+                  <h3 className="mb-1 text-[13px] font-semibold text-fg">{t('agentsTitle')}</h3>
+                  <p className="mb-2 text-xs leading-relaxed text-muted">{t('agentsHint')}</p>
+                  <div>
+                    {agents.map((a) => (
+                      <div key={a.name} className="flex items-center gap-3.5 py-2.5">
+                        <AppIcon muted>
+                          <UsersIcon className="h-5 w-5" />
+                        </AppIcon>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="truncate text-[15px] font-semibold text-fg">
+                              {a.name}
+                            </span>
+                            <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-muted">
+                              {a.source}
+                            </span>
                           </div>
+                          {a.description && (
+                            <p className="truncate text-[13px] text-muted">{a.description}</p>
+                          )}
                         </div>
-                        <button
-                          onClick={() =>
-                            void (c.installed ? uninstallCatalog(c.id) : installCatalog(c.id))
-                          }
-                          className={`mt-2 self-end rounded-md px-2 py-0.5 text-xs ${
-                            c.installed
-                              ? 'border border-line text-muted hover:text-fg'
-                              : 'border border-line bg-surface-2 text-fg hover:bg-accent-soft'
-                          }`}
-                        >
-                          {c.installed ? t('uninstall') : t('install')}
-                        </button>
                       </div>
                     ))}
                   </div>
-                  {pluginMsg && (
-                    <p
-                      className={`mt-1 text-xs ${
-                        pluginMsg.startsWith('✓') ? 'text-green-500' : 'text-red-500'
-                      }`}
-                    >
-                      {pluginMsg}
-                    </p>
-                  )}
-                  <p className="mt-1 text-xs text-muted">{t('skillsInstalledHint')}</p>
                 </div>
                 <div>
-                  <label className="mb-1 block font-medium">{t('agentsTitle')}</label>
-                  <ul className="space-y-1">
-                    {agents.map((a) => (
-                      <li key={a.name} className="rounded-md bg-surface-2 px-2 py-1">
-                        <span className="font-mono text-accent">{a.name}</span>
-                        <span className="ml-1 text-xs text-muted">[{a.source}]</span>
-                        {a.description && <p className="text-xs text-muted">{a.description}</p>}
-                      </li>
-                    ))}
-                  </ul>
-                  <p className="mt-1 text-xs text-muted">{t('agentsHint')}</p>
-                </div>
-                <div>
-                  <label className="mb-1 block font-medium">{t('skillsTitle')}</label>
+                  <h3 className="mb-1 text-[13px] font-semibold text-fg">{t('skillsTitle')}</h3>
+                  <p className="mb-2 text-xs leading-relaxed text-muted">{t('skillsHint')}</p>
                   {skills.length === 0 ? (
-                    <p className="text-xs text-muted">
+                    <p className="rounded-xl border border-dashed border-line px-3 py-6 text-center text-xs text-muted">
                       <code>.hemilier/skills/</code> · <code>userData/skills</code>
                     </p>
                   ) : (
-                    <ul className="space-y-1">
+                    <div>
                       {skills.map((s) => (
-                        <li key={s.name} className="rounded-md bg-surface-2 px-2 py-1">
-                          <span className="font-mono text-accent">{s.name}</span>
-                          <span className="ml-1 text-xs text-muted">[{s.source}]</span>
-                          {s.description && <p className="text-xs text-muted">{s.description}</p>}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-                <div>
-                  <div className="mb-1 flex items-center justify-between">
-                    <label className="font-medium">{t('pluginsTitle')}</label>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => void installPlugin()}
-                        className="rounded-md bg-surface-2 px-2 py-0.5 text-xs"
-                      >
-                        {t('installPlugin')}
-                      </button>
-                      <button
-                        onClick={() => void window.api.openPluginsDir()}
-                        className="rounded-md bg-surface-2 px-2 py-0.5 text-xs"
-                      >
-                        {t('openPluginsDir')}
-                      </button>
-                    </div>
-                  </div>
-                  {plugins.length === 0 ? (
-                    <p className="text-xs text-muted">
-                      <code>userData/plugins/&lt;name&gt;/plugin.json</code>
-                    </p>
-                  ) : (
-                    <ul className="space-y-1">
-                      {plugins.map((p) => (
-                        <li
-                          key={p.name}
-                          className="flex items-center justify-between rounded-md bg-surface-2 px-2 py-1"
-                        >
-                          <div className="min-w-0">
-                            <span className="font-mono">{p.name}</span>
-                            <span className="ml-1 text-xs text-muted">
-                              MCP×{p.mcpCount}
-                              {p.hasSkills ? ' · skills✓' : ''}
-                            </span>
-                            {p.description && (
-                              <p className="truncate text-xs text-muted">{p.description}</p>
+                        <div key={s.name} className="flex items-center gap-3.5 py-2.5">
+                          <AppIcon muted>
+                            <SparklesIcon className="h-5 w-5" />
+                          </AppIcon>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="truncate text-[15px] font-semibold text-fg">
+                                {s.name}
+                              </span>
+                              <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-muted">
+                                {s.source}
+                              </span>
+                            </div>
+                            {s.description && (
+                              <p className="truncate text-[13px] text-muted">{s.description}</p>
                             )}
                           </div>
-                          <input
-                            type="checkbox"
-                            checked={p.enabled}
-                            onChange={(e) => void togglePlugin(p.name, e.target.checked)}
-                          />
-                        </li>
+                        </div>
                       ))}
-                    </ul>
+                    </div>
                   )}
                 </div>
-              </>
+              </div>
             )}
 
             {cat === 'shortcuts' && (
@@ -965,10 +762,29 @@ export function SettingsModal(): JSX.Element | null {
             )}
 
             {cat === 'about' && (
-              <div className="space-y-2">
-                <div className="text-lg font-semibold">{t('appTagline')}</div>
-                <div className="text-xs text-muted">v0.1.0</div>
-                <p className="text-muted">{t('aboutDesc')}</p>
+              <div>
+                <div className="mb-5 flex items-center gap-4">
+                  <BrandIcon className="h-14 w-14 shrink-0" />
+                  <div>
+                    <div className="text-lg font-semibold">{t('appTagline')}</div>
+                    <div className="mt-0.5 text-xs text-muted">
+                      {appVersion ? `v${appVersion}` : ''}
+                    </div>
+                  </div>
+                </div>
+                <p className="text-[13px] leading-relaxed text-muted">{t('aboutDesc')}</p>
+                <div className="mt-4 flex flex-wrap gap-1.5">
+                  {t('aboutFeatures')
+                    .split(' · ')
+                    .map((f) => (
+                      <span
+                        key={f}
+                        className="rounded-full border border-line bg-surface-2 px-2.5 py-1 text-xs text-muted"
+                      >
+                        {f}
+                      </span>
+                    ))}
+                </div>
               </div>
             )}
           </div>

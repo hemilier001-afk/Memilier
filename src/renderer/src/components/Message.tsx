@@ -104,7 +104,9 @@ function Pre({ node: _node, children, ...props }: any): JSX.Element {
   )
 }
 
-export function Markdown({ text }: { text: string }): JSX.Element {
+// memo：仅当 text 变化才重解析。历史消息 text 稳定→零重解析；
+// 流式期间配合 StreamingBubble 的节流，把「每 token 全量重解析」降到 ~8 次/秒。
+export const Markdown = memo(function Markdown({ text }: { text: string }): JSX.Element {
   return (
     <div className="md">
       <ReactMarkdown
@@ -116,6 +118,32 @@ export function Markdown({ text }: { text: string }): JSX.Element {
       </ReactMarkdown>
     </div>
   )
+})
+
+// 节流：流式高频更新（可达 50~100 token/秒）时，把送进 Markdown 的文本合并到 ~8 次/秒，
+// 避免 ReactMarkdown 对累积全文的 O(n²) 重复解析导致长回复末段卡顿。尾随更新保证最终文本不丢。
+function useThrottledValue<T>(value: T, ms: number): T {
+  const [shown, setShown] = useState(value)
+  const lastAt = useRef(0)
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => {
+    const now = Date.now()
+    const elapsed = now - lastAt.current
+    if (elapsed >= ms) {
+      lastAt.current = now
+      setShown(value)
+    } else {
+      if (timer.current) clearTimeout(timer.current)
+      timer.current = setTimeout(() => {
+        lastAt.current = Date.now()
+        setShown(value)
+      }, ms - elapsed)
+    }
+    return () => {
+      if (timer.current) clearTimeout(timer.current)
+    }
+  }, [value, ms])
+  return shown
 }
 
 function ToolCallCard({ tc }: { tc: ToolCall }): JSX.Element | null {
@@ -304,15 +332,17 @@ export function StreamingBubble({
   reasoning?: string
 }): JSX.Element {
   const t = useT()
+  // 流式文本节流后再解析 Markdown（视觉上 8 次/秒足够顺滑，光标闪烁提供实时感）
+  const shownText = useThrottledValue(text, 120)
   return (
     <div className="flex gap-3">
       <AssistantAvatar active />
       <div className="min-w-0 flex-1">
         <div className="mb-1 text-xs font-semibold text-muted">hemilier</div>
         {reasoning ? <ReasoningBlock text={reasoning} open={!text} /> : null}
-        {text ? (
+        {shownText ? (
           <div className="relative">
-            <Markdown text={text} />
+            <Markdown text={shownText} />
             <span className="cursor-blink text-accent" />
           </div>
         ) : reasoning ? null : (

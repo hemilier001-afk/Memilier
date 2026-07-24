@@ -328,9 +328,11 @@ function PreviewView(): JSX.Element {
   const ext = preview.path.split('.').pop()?.toLowerCase() ?? ''
   const isMd = ext === 'md' || ext === 'markdown'
   const isHtml = ext === 'html' || ext === 'htm'
+  // Office/PDF 是「提取的文本」而非源内容：只读预览，不给编辑（否则保存会把二进制毁成文本）
+  const isOffice = ['docx', 'xlsx', 'pptx', 'pdf'].includes(ext)
   const truncated = preview.content.includes('…（已截断）')
   const dirty = draft !== preview.content
-  const text = isMd ? preview.content : `\`\`\`${ext}\n${preview.content}\n\`\`\``
+  const text = isMd || isOffice ? preview.content : `\`\`\`${ext}\n${preview.content}\n\`\`\``
 
   const save = async (): Promise<void> => {
     if (!active) return
@@ -366,16 +368,18 @@ function PreviewView(): JSX.Element {
               {mode === 'render' ? t('sourceBtn') : t('renderBtn')}
             </button>
           )}
-          <button
-            onClick={() =>
-              setMode(mode === 'edit' ? (isHtml && !truncated ? 'render' : 'view') : 'edit')
-            }
-            disabled={truncated}
-            title={truncated ? t('tooLargeToEdit') : ''}
-            className="rounded-md border border-line px-2 py-0.5 text-muted transition hover:text-fg disabled:opacity-40"
-          >
-            {mode === 'edit' ? t('previewBtn') : t('editBtn')}
-          </button>
+          {!isOffice && (
+            <button
+              onClick={() =>
+                setMode(mode === 'edit' ? (isHtml && !truncated ? 'render' : 'view') : 'edit')
+              }
+              disabled={truncated}
+              title={truncated ? t('tooLargeToEdit') : ''}
+              className="rounded-md border border-line px-2 py-0.5 text-muted transition hover:text-fg disabled:opacity-40"
+            >
+              {mode === 'edit' ? t('previewBtn') : t('editBtn')}
+            </button>
+          )}
         </div>
       </div>
 

@@ -52,7 +52,10 @@ describe('runSubAgent', () => {
       task: '总结一下',
       workspace: '/tmp',
       parentModelId: 'ollama::m',
-      permission: { request: vi.fn().mockResolvedValue(true) } as any,
+      permission: {
+        request: vi.fn().mockResolvedValue(true),
+        requestEx: vi.fn().mockResolvedValue({ approved: true, via: 'user' })
+      } as any,
       signal: new AbortController().signal,
       skillDirs: [],
       depth: 0
@@ -69,7 +72,10 @@ describe('runSubAgent', () => {
       task: '干活',
       workspace: '/tmp',
       parentModelId: 'ollama::m',
-      permission: { request: vi.fn().mockResolvedValue(true) } as any,
+      permission: {
+        request: vi.fn().mockResolvedValue(true),
+        requestEx: vi.fn().mockResolvedValue({ approved: true, via: 'user' })
+      } as any,
       signal: new AbortController().signal,
       skillDirs: [],
       depth: 0,
@@ -86,7 +92,10 @@ describe('runSubAgent', () => {
       task: '做点什么',
       workspace: '/tmp',
       parentModelId: 'ollama::m',
-      permission: { request: vi.fn() } as any,
+      permission: {
+        request: vi.fn(),
+        requestEx: vi.fn().mockResolvedValue({ approved: true, via: 'user' })
+      } as any,
       signal: new AbortController().signal,
       skillDirs: [],
       depth: 1
@@ -101,7 +110,10 @@ describe('runSubAgent', () => {
       task: '做点什么',
       workspace: '/tmp/__no_such_ws__',
       parentModelId: 'ollama::m',
-      permission: { request: vi.fn() } as any,
+      permission: {
+        request: vi.fn(),
+        requestEx: vi.fn().mockResolvedValue({ approved: true, via: 'user' })
+      } as any,
       signal: new AbortController().signal,
       skillDirs: [],
       depth: 0

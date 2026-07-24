@@ -34,6 +34,31 @@ export type ConversationKind = 'chat' | 'cowork' | 'code'
 /** 智能体运行模式：auto 放开工具 / plan 只读产出计划 / chat 纯对话不调工具 */
 export type AgentMode = 'auto' | 'plan' | 'chat'
 
+/** 权限预设（对齐 Codex 的四类审批口径）：
+ *  ask=请求批准（写/执行逐项确认）；auto=替我审批（工作区内常规操作自动批，MCP/危险仍问）；
+ *  full=完全访问（除危险命令外全部自动批，命令不进沙箱）；custom=按类别自定义 */
+export type ApprovalMode = 'ask' | 'auto' | 'full' | 'custom'
+/** 权限策略类别（自定义模式下逐类设 auto/ask） */
+export type PolicyCategory = 'read' | 'fileWrite' | 'command' | 'network' | 'memorySkill' | 'mcp'
+export type CustomPolicy = Partial<Record<Exclude<PolicyCategory, 'read'>, 'auto' | 'ask'>>
+
+/** 审计日志条目（userData/audit.log，JSONL 追加） */
+export interface AuditEntry {
+  ts: number
+  conv: string
+  tool: string
+  /** 入参摘要（截断） */
+  args: string
+  effect: 'none' | 'write' | 'exec'
+  /** 放行/拒绝的依据：rule-allow/rule-deny/preset/readonly/remembered/user/user-deny/unattended/hook-block */
+  decision: string
+  ok?: boolean
+  error?: string
+  ms?: number
+  sandbox?: boolean
+  source?: 'chat' | 'subagent'
+}
+
 /** 计划清单中的一步（Plan 面板） */
 export interface PlanStep {
   title: string
@@ -130,6 +155,8 @@ export interface Conversation {
   kind: ConversationKind
   /** 运行模式；旧数据缺失时按 'auto' 处理 */
   mode?: AgentMode
+  /** 会话级权限预设；缺省用 Settings.approvalMode */
+  approvalMode?: ApprovalMode
   /** 所属项目（可选） */
   projectId?: string
   /** 置顶（侧栏排序优先） */
@@ -207,6 +234,12 @@ export interface Settings {
   /** 启用生命周期钩子：.hemilier/hooks.json 里的 shell 命令会在工具执行前后/运行结束时触发。
    *  默认关闭（防止克隆来的不可信仓库里的 hooks 被自动执行）。 */
   enableHooks?: boolean
+  /** 全局默认权限预设（默认 ask=请求批准） */
+  approvalMode?: ApprovalMode
+  /** custom 预设下各类别的放行策略 */
+  customPolicy?: CustomPolicy
+  /** run_command 是否包 Seatbelt 沙箱（仅 macOS 生效；默认开；full 模式不沙箱） */
+  sandboxCommands?: boolean
 }
 
 export interface ModelInfo {
@@ -249,6 +282,27 @@ export interface McpConnectorInfo {
   envFields?: { key: string; label: string; required: boolean; secret?: boolean }[]
   argFields?: { label: string; placeholder: string; required: boolean }[]
   installed: boolean
+}
+
+/** 统一搜索结果：内置种子目录（builtin）+ MCP 注册中心（registry）。 */
+export interface McpSearchResult {
+  /** 唯一键（也用作 mcpServers 的键名）：builtin=目录 id，registry=服务器短名 */
+  key: string
+  name: string
+  description: string
+  source: 'builtin' | 'registry'
+  icon?: string
+  category?: string
+  publisher?: string
+  installed: boolean
+  envFields?: { key: string; label: string; required: boolean; secret?: boolean }[]
+  argFields?: { label: string; placeholder: string; required: boolean }[]
+  /** registry 本地包结果的运行命令（builtin 经 mcpConnect(id) 接入，无需带） */
+  command?: string
+  args?: string[]
+  /** registry 远程 server（streamable-http / sse）：无需本地安装，直连 URL */
+  url?: string
+  transport?: 'http' | 'sse'
 }
 
 /** 提供给设置界面展示的子 agent（多 agent 编排）信息 */
@@ -346,6 +400,15 @@ export interface Api {
   deleteProject(id: string): Promise<void>
   setConversationModel(id: string, model: string): Promise<void>
   setConversationMode(id: string, mode: AgentMode): Promise<void>
+  setConversationApproval(id: string, mode: ApprovalMode): Promise<void>
+  /** 最近的审计日志（新→旧） */
+  auditList(limit?: number): Promise<AuditEntry[]>
+  /** 在文件管理器里显示审计日志文件 */
+  auditOpen(): Promise<void>
+  /** 提取工作区内 Office/PDF 文档的文本（.docx/.xlsx/.pptx/.pdf） */
+  extractDocument(workspaceDir: string, relPath: string): Promise<string>
+  /** 提取任意绝对路径的 Office/PDF 文本（拖拽附件用） */
+  extractDocumentPath(absPath: string): Promise<string>
   setConversationWorkspace(id: string, dir: string): Promise<void>
   pickFile(): Promise<{ name: string; content: string } | null>
   transcribeAudio(bytes: Uint8Array, mime: string): Promise<string>
@@ -435,12 +498,20 @@ export interface Api {
       error?: string
       untrusted?: boolean
       source?: 'user' | 'plugin'
+      enabled?: boolean
     }[]
   >
   /** 信任并启用一个 MCP server（把其签名加入 trustedMcp） */
   trustMcp(name: string): Promise<void>
   /** MCP 连接器目录（内置精选） */
   mcpCatalog(): Promise<McpConnectorInfo[]>
+  /** 统一搜索：内置种子目录 + 在线 MCP 注册中心（离线时仅返回种子，registryOk=false） */
+  mcpSearch(query: string): Promise<{ results: McpSearchResult[]; registryOk: boolean }>
+  /** 接入一个注册中心搜索结果（第三方来源，不自动授信，须在列表显式信任） */
+  mcpInstallRegistry(
+    entry: McpSearchResult,
+    input: { env?: Record<string, string>; extraArgs?: string[] }
+  ): Promise<{ ok: boolean; error?: string }>
   /** 一键接入一个目录连接器（自动写配置 + 授信） */
   mcpConnect(
     id: string,
@@ -454,6 +525,8 @@ export interface Api {
   mcpImport(text: string): Promise<{ ok: boolean; added?: number; error?: string }>
   /** 读取系统剪贴板文本（主进程代理，绕过渲染端权限限制） */
   readClipboardText(): Promise<string>
+  /** 当前应用版本（app.getVersion） */
+  appVersion(): Promise<string>
   runTerminal(conversationId: string, workspaceDir: string, command: string): Promise<void>
   killTerminal(conversationId: string): Promise<void>
   listRoutines(): Promise<Routine[]>

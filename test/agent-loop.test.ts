@@ -46,7 +46,13 @@ vi.mock('../src/main/agent/tools', () => ({
 
 import { runAgent } from '../src/main/agent/loop'
 
-function makeOpts(chatImpl: any, permission = { request: vi.fn().mockResolvedValue(true) }) {
+function makeOpts(
+  chatImpl: any,
+  permission = {
+    request: vi.fn().mockResolvedValue(true),
+    requestEx: vi.fn().mockResolvedValue({ approved: true, via: 'user' })
+  }
+) {
   const events: AgentEvent[] = []
   const opts = {
     conversationId: 'c1',
@@ -157,7 +163,10 @@ describe('runAgent', () => {
       schema: { parse: (a: any) => a, safeParse: (a: any) => ({ success: true, data: a }) },
       execute
     }
-    const permission = { request: vi.fn().mockResolvedValue(false) }
+    const permission = {
+      request: vi.fn().mockResolvedValue(false),
+      requestEx: vi.fn().mockResolvedValue({ approved: false, via: 'user' })
+    }
 
     const toolCall: ToolCall = { id: 't1', name: 'write_file', args: {}, status: 'pending' }
     const chat = vi

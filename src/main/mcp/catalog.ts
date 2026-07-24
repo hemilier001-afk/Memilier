@@ -114,6 +114,54 @@ export const MCP_CATALOG: McpConnectorDef[] = [
     ]
   },
   {
+    id: 'gitlab',
+    name: 'GitLab',
+    icon: '🦊',
+    category: '开发',
+    description: '项目 / Issue / MR / 文件操作。需要 GitLab 个人访问令牌。',
+    command: 'npx',
+    args: ['-y', '@modelcontextprotocol/server-gitlab'],
+    envFields: [
+      {
+        key: 'GITLAB_PERSONAL_ACCESS_TOKEN',
+        label: 'GitLab 个人访问令牌',
+        required: true,
+        secret: true
+      },
+      {
+        key: 'GITLAB_API_URL',
+        label: 'GitLab API 地址（自建实例填，默认 gitlab.com）',
+        required: false
+      }
+    ]
+  },
+  {
+    id: 'postgres',
+    name: 'PostgreSQL',
+    icon: '🐘',
+    category: '数据',
+    description: '只读查询 Postgres 数据库、检视表结构。填入连接串即可。',
+    command: 'npx',
+    args: ['-y', '@modelcontextprotocol/server-postgres'],
+    argFields: [
+      {
+        label: '数据库连接串',
+        placeholder: 'postgresql://user:pass@localhost:5432/db',
+        required: true
+      }
+    ]
+  },
+  {
+    id: 'redis',
+    name: 'Redis',
+    icon: '🔴',
+    category: '数据',
+    description: '读写 Redis 键值、执行常用命令。填入 Redis 连接地址。',
+    command: 'npx',
+    args: ['-y', '@modelcontextprotocol/server-redis'],
+    argFields: [{ label: 'Redis 地址', placeholder: 'redis://localhost:6379', required: true }]
+  },
+  {
     id: 'everything',
     name: '功能演示（测试用）',
     icon: '🧪',

@@ -22,42 +22,41 @@ function blankRoutine(kind: Routine['kind']): Routine {
   }
 }
 
-// 一键自动化模板（对齐工作流工具的 recipe 库）：点了填进表单，用户确认后保存
-const TEMPLATES: { key: string; make: (kind: Routine['kind']) => Routine }[] = [
+// 一键自动化模板（对齐工作流工具的 recipe 库）：点了填进表单，用户确认后保存。
+// 名称/正文都走 i18n：名称复用 tpl* 键，正文用 tpl*Prompt 键（英文模式全英文）。
+type TT = (k: string) => string
+const TEMPLATES: { key: string; make: (kind: Routine['kind'], t: TT) => Routine }[] = [
   {
     key: 'tplErrorSummary',
-    make: (kind) => ({
+    make: (kind, t) => ({
       ...blankRoutine(kind),
-      name: '每日错误汇总',
+      name: t('tplErrorSummary'),
       scheduleKind: 'daily',
       atTime: '18:00',
       reportToFile: true,
-      prompt:
-        '扫描工作区里最近的日志（如 logs/ 目录或 *.log 文件），汇总今天出现的错误与告警，按出现频次排序，写一份简明摘要。'
+      prompt: t('tplErrorSummaryPrompt')
     })
   },
   {
     key: 'tplDepCheck',
-    make: (kind) => ({
+    make: (kind, t) => ({
       ...blankRoutine(kind),
-      name: '依赖更新检查',
+      name: t('tplDepCheck'),
       scheduleKind: 'weekly',
       weekday: 1,
       atTime: '09:00',
       reportToFile: true,
-      prompt:
-        '检查本项目的依赖（package.json 等）是否有新版本可升级，列出可升级项、当前版本→最新版本，以及可能的破坏性变更提示。不要自动升级。'
+      prompt: t('tplDepCheckPrompt')
     })
   },
   {
     key: 'tplFileTidy',
-    make: (kind) => ({
+    make: (kind, t) => ({
       ...blankRoutine(kind),
-      name: '新文件自动整理',
+      name: t('tplFileTidy'),
       scheduleKind: 'fileChange',
       watchDir: 'inbox',
-      prompt:
-        '有新文件进入 inbox 目录时，识别其类型并整理：按类别/日期归类，必要时重命名，给出整理说明。操作前先说明计划。'
+      prompt: t('tplFileTidyPrompt')
     })
   }
 ]
@@ -278,7 +277,7 @@ export function RoutinesModal(): JSX.Element | null {
                 {TEMPLATES.map((tpl) => (
                   <button
                     key={tpl.key}
-                    onClick={() => setEditing(tpl.make(view))}
+                    onClick={() => setEditing(tpl.make(view, t))}
                     className="rounded-md border border-line bg-surface-2 px-2 py-1 text-xs text-fg transition hover:bg-accent-soft"
                   >
                     + {t(tpl.key)}

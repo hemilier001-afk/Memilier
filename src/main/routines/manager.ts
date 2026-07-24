@@ -32,6 +32,7 @@ const RUN_CAP_MS = 30 * 60_000 // 单次例程运行的墙钟上限，防失控
 const watchers = new Map<string, FSWatcher>() // fileChange 例程的文件监听器
 const watchDebounce = new Map<string, ReturnType<typeof setTimeout>>()
 let sched: { emitAgent: EmitAgent; emitTasks: EmitTasks } | null = null // 调度器回调（供 watcher 触发）
+let schedTimer: ReturnType<typeof setInterval> | null = null // 30s 轮询句柄（可清理，防重复注册）
 
 /** 到点判定：interval 用间隔；daily/weekly 用时刻（含"错过补跑"）；fileChange 由监听器触发不走轮询 */
 function isDue(r: Routine, now: number): boolean {
@@ -266,7 +267,8 @@ export const routineManager = {
     ensure()
     sched = { emitAgent, emitTasks }
     refreshWatchers()
-    setInterval(() => {
+    if (schedTimer) clearInterval(schedTimer) // 幂等：重复调用不叠加定时器
+    schedTimer = setInterval(() => {
       const now = Date.now()
       for (const r of Object.values(routines)) {
         if (!r.enabled || running.has(r.id)) continue

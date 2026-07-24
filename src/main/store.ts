@@ -9,7 +9,14 @@ import {
 } from 'node:fs'
 import path from 'node:path'
 import { app, safeStorage } from 'electron'
-import type { Conversation, ConversationKind, Message, Project, Settings } from '@shared/types'
+import type {
+  Conversation,
+  ConversationKind,
+  Message,
+  Project,
+  Settings,
+  ApprovalMode
+} from '@shared/types'
 import { imageStore } from './images'
 
 // 被移除消息里引用的图片文件一并清理，避免孤儿文件在 userData/images 里越积越多
@@ -399,6 +406,14 @@ export const store = {
     const c = conversations[id]
     if (c) {
       c.mode = mode
+      persistConv(c)
+    }
+  },
+  setConversationApproval(id: string, mode: ApprovalMode): void {
+    ensure()
+    const c = conversations[id]
+    if (c) {
+      c.approvalMode = mode
       persistConv(c)
     }
   },
