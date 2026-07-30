@@ -32,6 +32,8 @@ const RUN_CAP_MS = 30 * 60_000 // 单次例程运行的墙钟上限，防失控
 const watchers = new Map<string, FSWatcher>() // fileChange 例程的文件监听器
 const watchDebounce = new Map<string, ReturnType<typeof setTimeout>>()
 let sched: { emitAgent: EmitAgent; emitTasks: EmitTasks } | null = null // 调度器回调（供 watcher 触发）
+// 文件变化例程：本次触发中变动过的文件名（run 时取出、随 prompt 交给智能体）
+const pendingChanges = new Map<string, Set<string>>()
 let schedTimer: ReturnType<typeof setInterval> | null = null // 30s 轮询句柄（可清理，防重复注册）
 
 /** 到点判定：interval 用间隔；daily/weekly 用时刻（含"错过补跑"）；fileChange 由监听器触发不走轮询 */
@@ -61,7 +63,14 @@ function refreshWatchers(): void {
     const base = r.workspaceDir || store.getSettings().workspaceDir
     const dir = path.isAbsolute(r.watchDir ?? '') ? r.watchDir! : path.join(base, r.watchDir ?? '.')
     try {
-      const w = watch(dir, { recursive: true }, () => {
+      const w = watch(dir, { recursive: true }, (_ev, filename) => {
+        // 攒下这批变化的文件名，随 prompt 一起交给智能体——
+        // 否则例程只知道"目录里有东西变了"，还得自己重扫整个目录。
+        if (filename) {
+          const set = pendingChanges.get(r.id) ?? new Set<string>()
+          if (set.size < 50) set.add(String(filename))
+          pendingChanges.set(r.id, set)
+        }
         // 去抖 2s：一批写入只触发一次
         clearTimeout(watchDebounce.get(r.id))
         watchDebounce.set(
@@ -154,6 +163,16 @@ export const routineManager = {
     r.lastRunAt = Date.now()
     persist()
 
+    // 文件变化触发：把这批变动的文件名交给智能体（支持 {{changed_files}} 占位符）
+    const changed = [...(pendingChanges.get(id) ?? [])]
+    pendingChanges.delete(id)
+    const changedText = changed.length ? changed.join('、') : ''
+    const promptWithChanges = r.prompt.includes('{{changed_files}}')
+      ? r.prompt.replace(/\{\{changed_files\}\}/g, changedText || '（未捕获到具体文件名）')
+      : changedText
+        ? `${r.prompt}\n\n本次检测到变动的文件：${changedText}`
+        : r.prompt
+
     // 为这次运行新建一个对话
     const conv = store.createConversation(r.kind)
     conv.title = `⏰ ${r.name}`
@@ -199,7 +218,10 @@ export const routineManager = {
         try {
           await runAgent({
             conversationId: conv.id,
-            userContent: attempt === 1 ? r.prompt : `（自动重试 第 ${attempt} 次）\n${r.prompt}`,
+            userContent:
+              attempt === 1
+                ? promptWithChanges
+                : `（自动重试 第 ${attempt} 次）\n${promptWithChanges}`,
             provider,
             permission,
             signal: ac.signal,

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { Message, ModelInfo, ToolCall } from '@shared/types'
 import type { ChatOptions, ChatResult, ModelProvider } from './types'
-import { stallGuard } from './util'
+import { stallGuard, withRetry } from './util'
 import { netFetch } from './netfetch'
 
 const STALL_MS = 60_000
@@ -143,6 +143,8 @@ export class OpenAICompatProvider implements ModelProvider {
       model: opts.model,
       messages: toOpenAIMessages(opts.messages),
       stream: true,
+      // 让端点在最后一个 chunk 里带上真实用量（OpenAI 规范；不支持的端点会忽略该字段）
+      stream_options: { include_usage: true },
       ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
       ...(opts.maxTokens !== undefined ? { max_tokens: opts.maxTokens } : {}),
       tools: withTools
@@ -155,12 +157,17 @@ export class OpenAICompatProvider implements ModelProvider {
 
     const guard = stallGuard(opts.signal, STALL_MS)
     try {
-      const res = await netFetch(`${this.baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: this.headers(),
-        body: JSON.stringify(body),
-        signal: guard.signal
-      })
+      // 建连阶段重试瞬时故障（429/5xx/网络抖动）；已开始流式后不重试，避免重复内容
+      const res = await withRetry(
+        () =>
+          netFetch(`${this.baseUrl}/chat/completions`, {
+            method: 'POST',
+            headers: this.headers(),
+            body: JSON.stringify(body),
+            signal: guard.signal
+          }),
+        { statusOf: (r) => r.status, signal: opts.signal }
+      )
 
       if (!res.ok || !res.body) {
         const txt = await res.text().catch(() => '')
@@ -172,6 +179,7 @@ export class OpenAICompatProvider implements ModelProvider {
       let buffer = ''
       let content = ''
       let reasoning = ''
+      let usage: import('./types').TokenUsage | undefined
       const toolChoices: ToolChoice[] = []
 
       while (true) {
@@ -192,6 +200,7 @@ export class OpenAICompatProvider implements ModelProvider {
             choices?: (ToolChoice & {
               delta?: { content?: string; reasoning_content?: string; reasoning?: string }
             })[]
+            usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number }
             error?: { message?: string } | string
           }
           try {
@@ -204,6 +213,16 @@ export class OpenAICompatProvider implements ModelProvider {
             throw new Error(msg || 'API 返回错误')
           }
 
+          // 用量通常在最后一个 chunk（需 stream_options.include_usage）；有些端点也放在每个 chunk
+          if (json.usage) {
+            usage = {
+              prompt: json.usage.prompt_tokens ?? 0,
+              completion: json.usage.completion_tokens ?? 0,
+              total:
+                json.usage.total_tokens ??
+                (json.usage.prompt_tokens ?? 0) + (json.usage.completion_tokens ?? 0)
+            }
+          }
           const choice = json.choices?.[0]
           if (!choice) continue
           const rc = choice.delta?.reasoning_content ?? choice.delta?.reasoning
@@ -222,7 +241,8 @@ export class OpenAICompatProvider implements ModelProvider {
       return {
         content,
         toolCalls: extractToolCalls(toolChoices),
-        reasoning: reasoning || undefined
+        reasoning: reasoning || undefined,
+        usage
       }
     } finally {
       guard.dispose()

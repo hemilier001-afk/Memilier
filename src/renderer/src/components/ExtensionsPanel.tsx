@@ -416,21 +416,62 @@ export function ExtensionsPanel(): JSX.Element {
                   name={p.name}
                   desc={p.description}
                   badge={
-                    p.mcpCount ? (
-                      <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-muted">
-                        MCP×{p.mcpCount}
-                      </span>
-                    ) : undefined
+                    <>
+                      {p.mcpCount ? (
+                        <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-muted">
+                          MCP×{p.mcpCount}
+                        </span>
+                      ) : null}
+                      {/* 僵尸插件：内容已被内置技能覆盖，装着不生效 */}
+                      {p.superseded && (
+                        <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-muted">
+                          {t('extSuperseded')}
+                        </span>
+                      )}
+                      {!p.superseded && p.latestVersion && p.version !== p.latestVersion && (
+                        <span className="rounded bg-accent-soft px-1.5 py-0.5 text-[10px] text-accent">
+                          {t('extUpdatable')}
+                        </span>
+                      )}
+                    </>
                   }
                   right={
-                    <Toggle
-                      on={p.enabled}
-                      onChange={() =>
-                        void window.api
-                          .setPluginEnabled(p.name, !p.enabled)
-                          .then(() => void reloadPlugins())
-                      }
-                    />
+                    <div className="flex items-center gap-3">
+                      {p.superseded ? (
+                        <button
+                          onClick={() => {
+                            if (!window.confirm(t('extRemoveSuperseded').replace('{n}', p.name)))
+                              return
+                            void window.api
+                              .uninstallPlugin(p.catalogId ?? p.name)
+                              .then(() => void reloadPlugins())
+                          }}
+                          className="text-xs text-muted hover:text-red-500"
+                        >
+                          {t('extRemove')}
+                        </button>
+                      ) : p.latestVersion && p.version !== p.latestVersion ? (
+                        <button
+                          onClick={() =>
+                            void window.api
+                              .uninstallPlugin(p.catalogId ?? p.name)
+                              .then(() => window.api.installCatalogPlugin(p.catalogId ?? p.name))
+                              .then(() => void reloadPlugins())
+                          }
+                          className="rounded-lg border border-line bg-surface-2 px-2.5 py-1 text-xs text-fg hover:bg-accent-soft"
+                        >
+                          {t('extUpdate')}
+                        </button>
+                      ) : null}
+                      <Toggle
+                        on={p.enabled}
+                        onChange={() =>
+                          void window.api
+                            .setPluginEnabled(p.name, !p.enabled)
+                            .then(() => void reloadPlugins())
+                        }
+                      />
+                    </div>
                   }
                 />
               ))

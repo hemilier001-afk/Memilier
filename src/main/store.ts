@@ -417,11 +417,12 @@ export const store = {
       persistConv(c)
     }
   },
-  setConversationDistilled(id: string): void {
+  setConversationDistilled(id: string, turns?: number): void {
     ensure()
     const c = conversations[id]
     if (c) {
       c.distilled = true
+      if (turns != null) c.distilledTurns = turns
       persistConv(c)
     }
   },

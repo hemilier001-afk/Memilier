@@ -4,7 +4,6 @@ import { basename, dirname, join } from 'node:path'
 import { app, BrowserWindow, clipboard, dialog, ipcMain, session, shell } from 'electron'
 import type {
   AgentEvent,
-  Conversation,
   FsEntry,
   GitFile,
   GitStatus,
@@ -57,6 +56,9 @@ import { PermissionManager } from './agent/permission'
 import { imageStore } from './images'
 import { mcpManager, mcpSignature } from './mcp/manager'
 import { MCP_CATALOG } from './mcp/catalog'
+import { CATALOG as MCP_PLUGIN_CATALOG } from './plugins/catalog'
+import { BUILTIN_SKILLS } from './skills/builtin'
+import path from 'node:path'
 import { searchRegistry } from './mcp/registry'
 import type { McpSearchResult } from '@shared/types'
 import { pluginManager } from './plugins/manager'
@@ -70,6 +72,7 @@ import { resolveInWorkspace } from './security'
 import { store } from './store'
 import { netFetch } from './providers/netfetch'
 import { auditPath, listAudit } from './audit'
+import { compactConversation } from './compact'
 import { extractAny, isOfficeFile } from './office/extract'
 
 /** 按设置应用网络代理：空=跟随系统代理（多数国内代理软件会设系统代理）；填了=固定服务器 */
@@ -274,7 +277,12 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
 
   ipcMain.handle('workspace:readFile', async (_e, workspaceDir: string, relPath: string) => {
     const abs = resolveInWorkspace(workspaceDir, relPath)
-    const content = await fsp.readFile(abs, 'utf8')
+    // 二进制不能按文本预览：读出来是乱码，若用户在编辑器里保存会**损坏原文件**
+    const buf = await fsp.readFile(abs)
+    if (buf.subarray(0, 4096).includes(0)) {
+      throw new Error('这是二进制文件，无法以文本预览或编辑。')
+    }
+    const content = buf.toString('utf8')
     return content.length > 200_000 ? `${content.slice(0, 200_000)}\n…（已截断）` : content
   })
 
@@ -287,6 +295,12 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
       await fsp.writeFile(abs, content, 'utf8')
     }
   )
+
+  // 删除工作区内的文件（仅供"回滚新建的文件"用；路径经沙箱校验，越界拒绝）
+  ipcMain.handle('workspace:deleteFile', async (_e, workspaceDir: string, relPath: string) => {
+    const abs = resolveInWorkspace(workspaceDir, relPath)
+    await fsp.rm(abs, { force: true })
+  })
 
   // 工作区文件平铺列表（供 @ 引用），跳过常见大目录，最多 800 条
   ipcMain.handle('workspace:listFiles', async (_e, workspaceDir: string) => {
@@ -480,10 +494,37 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
       return []
     }
   })
+  ipcMain.handle('agents:save', async (_e, ws: string, scope: 'workspace' | 'global', def) => {
+    try {
+      await agentManager.save(ws, scope, def)
+      return { ok: true }
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  })
+  ipcMain.handle(
+    'agents:remove',
+    async (_e, ws: string, scope: 'workspace' | 'global', name: string) => {
+      try {
+        await agentManager.remove(ws, scope, name)
+        return { ok: true }
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : String(e) }
+      }
+    }
+  )
   ipcMain.handle('agents:list', async (_e, ws: string) =>
-    (await agentManager.list(ws)).map((a) => ({
+    (
+      await agentManager.list(
+        ws,
+        pluginManager.activePlugins().flatMap((p) => p.agentDirs)
+      )
+    ).map((a) => ({
       name: a.name,
       description: a.description,
+      tools: a.tools?.join(', '),
+      model: a.model,
+      prompt: a.prompt,
       source: a.source
     }))
   )
@@ -494,15 +535,28 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     return skills.map((s) => ({ name: s.name, description: s.description, source: s.source }))
   })
 
-  ipcMain.handle('plugins:list', () =>
-    pluginManager.listPlugins().map((p) => ({
-      name: p.name,
-      description: p.description,
-      enabled: p.enabled,
-      mcpCount: Object.keys(p.mcpServers).length,
-      hasSkills: p.skillDirs.length > 0
-    }))
-  )
+  ipcMain.handle('plugins:list', () => {
+    const builtinNames = new Set(BUILTIN_SKILLS.map((b) => b.name))
+    return pluginManager.listPlugins().map((p) => {
+      // 目录条目按 name 或目录名匹配（老插件的 plugin.json 里 name 是中文显示名）
+      const entry = MCP_PLUGIN_CATALOG.find(
+        (c) => c.name === p.name || path.basename(p.dir) === c.id
+      )
+      // 僵尸插件：它提供的技能全部已被内置技能覆盖 → 装着也不生效，建议移除
+      const superseded = p.skillNames.length > 0 && p.skillNames.every((n) => builtinNames.has(n))
+      return {
+        name: p.name,
+        description: p.description,
+        enabled: p.enabled,
+        mcpCount: Object.keys(p.mcpServers).length,
+        hasSkills: p.skillDirs.length > 0,
+        version: p.version,
+        latestVersion: entry?.version,
+        superseded,
+        catalogId: entry?.id ?? path.basename(p.dir)
+      }
+    })
+  })
   ipcMain.handle('plugins:setEnabled', (_e, name: string, enabled: boolean) =>
     pluginManager.setEnabled(name, enabled)
   )
@@ -869,15 +923,20 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
 
   // 自动沉淀：较长的对话结束后，让模型提炼 0-3 条候选记忆进「待采纳」区（每会话一次；
   // 不直接写正式记忆——保持"记忆写入须经人"的安全红线，用户在 Memory 面板一键采纳/忽略）
+  const DISTILL_MIN_TURNS = 6 // 太短的对话没什么可沉淀
+  const DISTILL_EVERY = 20 // 长会话每再增这么多轮，再沉淀一次
   async function autoDistill(id: string): Promise<void> {
     const conv = store.getConversation(id)
-    if (!conv || conv.distilled) return
+    if (!conv) return
     const turns = conv.messages.filter((m) => m.role === 'user' || m.role === 'assistant').length
-    if (turns < 6) return
+    if (turns < DISTILL_MIN_TURNS) return
+    // 旧数据只有 distilled=true 没有轮数：视作在当时的轮数沉淀过，之后按增量判断
+    const last = conv.distilledTurns ?? (conv.distilled ? turns : 0)
+    if (conv.distilled && turns - last < DISTILL_EVERY) return
     const settings = store.getSettings()
     const modelId = conv.model || settings.defaultModel
     if (!bareModel(modelId)) return
-    store.setConversationDistilled(id) // 先标记，失败也不重试（避免每轮都花一次调用）
+    store.setConversationDistilled(id, turns) // 先标记，失败也不重试（避免每轮都花一次调用）
     try {
       const provider = resolveProvider(modelId, settings)
       const transcript = conv.messages
@@ -995,58 +1054,4 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
       box.done?.()
     }
   })
-
-  async function compactConversation(
-    id: string
-  ): Promise<{ ok: boolean; conversation?: Conversation; error?: string }> {
-    const conv = store.getConversation(id)
-    if (!conv) return { ok: false, error: '对话不存在' }
-    const KEEP = 4 // 保留最近 4 条原文
-    if (conv.messages.length <= KEEP + 2) return { ok: false, error: '对话还很短，暂不需要压缩' }
-    const settings = store.getSettings()
-    const modelId = conv.model || settings.defaultModel
-    if (!bareModel(modelId)) return { ok: false, error: '尚未选择模型' }
-    const provider = resolveProvider(modelId, settings)
-
-    const old = conv.messages.slice(0, -KEEP)
-    const kept = conv.messages.slice(-KEEP)
-    while (kept.length && kept[0].role === 'tool') kept.shift() // 保住工具配对
-    const transcript = old
-      .filter((m) => m.content)
-      .map((m) => {
-        const role = m.role === 'user' ? '用户' : m.role === 'assistant' ? '助手' : '工具结果'
-        return `【${role}】${m.content.slice(0, 2000)}`
-      })
-      .join('\n')
-      .slice(0, 40_000)
-
-    try {
-      const { content } = await provider.chat({
-        model: bareModel(modelId),
-        messages: [
-          {
-            id: 's',
-            role: 'system',
-            content:
-              '你是对话压缩器。把给定的对话历史压缩成一份简洁但信息完整的中文摘要，保留：用户的目标与关键要求、已完成的事项与结论、重要决定、未解决的问题、涉及的文件/路径/命令等关键细节。用要点列出，不要添加评论。',
-            createdAt: 0
-          },
-          { id: 'u', role: 'user', content: transcript, createdAt: 0 }
-        ]
-      })
-      const summaryMsg = {
-        id: randomUUID(),
-        role: 'assistant' as const,
-        content: `📜 **对话已压缩**（此前 ${old.length} 条消息的摘要）：\n\n${content}`,
-        createdAt: Date.now()
-      }
-      conv.messages = [summaryMsg, ...kept]
-      conv.updatedAt = Date.now()
-      store.saveConversation(conv)
-      store.flush()
-      return { ok: true, conversation: conv }
-    } catch (e) {
-      return { ok: false, error: e instanceof Error ? e.message : String(e) }
-    }
-  }
 }

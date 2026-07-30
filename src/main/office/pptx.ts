@@ -12,6 +12,8 @@ export interface SlideInput {
   image?: string
   /** 数据图表（柱/条/折线/饼） */
   chart?: ChartSpec
+  /** 演讲者备注（讲稿/要点说明，放映时只有演讲者看得到） */
+  notes?: string
 }
 
 // 正文区盒子（EMU）：标题下方
@@ -78,15 +80,45 @@ function chartFrame(rId: string): string {
 }
 
 /** extraShapes：额外的图片/图表形状 XML；有它时不渲染正文要点占位符 */
+// 要点/标题里的 markdown 标记此前会字面显示（幻灯片上出现 "**粗体**"）。
+// PPT 的段落支持 run 级样式，这里解析成真正的加粗/斜体 run。
+function inlineRuns(text: string, sz: number, bold = false): string {
+  const re = /(\*\*((?:[^*]|\*(?!\*))+)\*\*)|(\*([^*]+)\*)|(`([^`]+)`)|(~~([^~]+)~~)/g
+  const parts: { t: string; b?: boolean; i?: boolean; mono?: boolean; s?: boolean }[] = []
+  let last = 0
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text))) {
+    if (m.index > last) parts.push({ t: text.slice(last, m.index) })
+    if (m[2] !== undefined) parts.push({ t: m[2], b: true })
+    else if (m[4] !== undefined) parts.push({ t: m[4], i: true })
+    else if (m[6] !== undefined) parts.push({ t: m[6], mono: true })
+    else if (m[8] !== undefined) parts.push({ t: m[8], s: true })
+    last = m.index + m[0].length
+  }
+  if (last < text.length) parts.push({ t: text.slice(last) })
+  if (!parts.length) parts.push({ t: '' })
+  return parts
+    .map((p) => {
+      const attrs = [`lang="zh-CN"`, `sz="${sz}"`]
+      if (bold || p.b) attrs.push('b="1"')
+      if (p.i) attrs.push('i="1"')
+      if (p.s) attrs.push('strike="sngStrike"')
+      const font = p.mono ? '<a:latin typeface="Courier New"/><a:ea typeface="Courier New"/>' : ''
+      return `<a:r><a:rPr ${attrs.join(' ')}>${font}</a:rPr><a:t>${xmlEsc(p.t)}</a:t></a:r>`
+    })
+    .join('')
+}
+
 function slideXml(s: SlideInput, extraShapes: string): string {
   const bodyPlaceholder = extraShapes
     ? ''
     : (() => {
         const bullets = (s.bullets ?? []).map(
           (b) =>
-            `<a:p><a:pPr indent="-228600" marL="285750"><a:buChar char="•"/></a:pPr><a:r><a:rPr lang="zh-CN" sz="2000"/><a:t>${xmlEsc(
-              b
-            )}</a:t></a:r></a:p>`
+            `<a:p><a:pPr indent="-228600" marL="285750"><a:buChar char="•"/></a:pPr>${inlineRuns(
+              b,
+              2000
+            )}</a:p>`
         )
         if (!bullets.length) bullets.push('<a:p><a:endParaRPr/></a:p>')
         return `<p:sp><p:nvSpPr><p:cNvPr id="3" name="Body"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr>
@@ -99,11 +131,32 @@ function slideXml(s: SlideInput, extraShapes: string): string {
 <p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>
 <p:sp><p:nvSpPr><p:cNvPr id="2" name="Title"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr><p:ph type="title"/></p:nvPr></p:nvSpPr>
 <p:spPr><a:xfrm><a:off x="838200" y="365125"/><a:ext cx="10515600" cy="1325563"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>
-<p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="zh-CN" sz="3600" b="1"/><a:t>${xmlEsc(
-    s.title
-  )}</a:t></a:r></a:p></p:txBody></p:sp>
+<p:txBody><a:bodyPr/><a:lstStyle/><a:p>${inlineRuns(s.title, 3600, true)}</a:p></p:txBody></p:sp>
 ${bodyPlaceholder}${extraShapes}
 </p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>`
+}
+
+const NOTES_MASTER = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:notesMaster ${NS_P}><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
+<p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>
+</p:spTree></p:cSld><p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/></p:notesMaster>`
+
+/** 演讲者备注页（notesSlideN.xml） */
+function notesXml(text: string): string {
+  const paras = text
+    .split(/\n+/)
+    .filter((x) => x.trim())
+    .map(
+      (line) => `<a:p><a:r><a:rPr lang="zh-CN" sz="1200"/><a:t>${xmlEsc(line)}</a:t></a:r></a:p>`
+    )
+    .join('')
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:notes ${NS_P}><p:cSld><p:spTree>
+<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
+<p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>
+<p:sp><p:nvSpPr><p:cNvPr id="2" name="Notes Placeholder"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr>
+<p:spPr/><p:txBody><a:bodyPr/><a:lstStyle/>${paras || '<a:p><a:endParaRPr/></a:p>'}</p:txBody></p:sp>
+</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:notes>`
 }
 
 /** 大纲 → .pptx 文件内容。images：`image` 字段路径 → 图片字节（由工具层从工作区读入）。 */
@@ -111,6 +164,7 @@ export function slidesToPptx(slides: SlideInput[], images?: Map<string, Buffer>)
   if (!slides.length) throw new Error('至少需要一张幻灯片')
   const relType = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
   const imgMap = images ?? new Map<string, Buffer>()
+  const hasNotes = slides.some((s) => s.notes?.trim())
 
   // 逐页处理图片/图表，分配全局部件编号
   const slideExtraShapes: string[] = []
@@ -248,14 +302,43 @@ ${slides
       name: `ppt/slides/slide${i + 1}.xml`,
       data: slideXml(s, slideExtraShapes[i])
     })),
-    ...slides.map((_s, i) => ({
+    ...slides.map((s, i) => ({
       name: `ppt/slides/_rels/slide${i + 1}.xml.rels`,
       data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
 <Relationship Id="rId1" Type="${relType}/slideLayout" Target="../slideLayouts/slideLayout1.xml"/>
+${s.notes?.trim() ? `<Relationship Id="rIdNotes" Type="${relType}/notesSlide" Target="../notesSlides/notesSlide${i + 1}.xml"/>` : ''}
 ${slideExtraRels[i]}
 </Relationships>`
     })),
+    // 演讲者备注页（有 notes 的幻灯片才生成）
+    ...(hasNotes
+      ? [
+          { name: 'ppt/notesMasters/notesMaster1.xml', data: NOTES_MASTER },
+          {
+            name: 'ppt/notesMasters/_rels/notesMaster1.xml.rels',
+            data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rId1" Type="${relType}/theme" Target="../theme/theme1.xml"/>
+</Relationships>`
+          }
+        ]
+      : []),
+    ...slides.flatMap((s, i) =>
+      s.notes?.trim()
+        ? [
+            { name: `ppt/notesSlides/notesSlide${i + 1}.xml`, data: notesXml(s.notes) },
+            {
+              name: `ppt/notesSlides/_rels/notesSlide${i + 1}.xml.rels`,
+              data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rId1" Type="${relType}/notesMaster" Target="../notesMasters/notesMaster1.xml"/>
+<Relationship Id="rId2" Type="${relType}/slide" Target="../slides/slide${i + 1}.xml"/>
+</Relationships>`
+            }
+          ]
+        : []
+    ),
     ...extraParts
   ])
 }

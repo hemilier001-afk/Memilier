@@ -7,10 +7,14 @@ import type { AuditEntry } from '../src/shared/types'
 // 无 electron 环境下 auditPath 退回 os.tmpdir()/hemilier-audit.log
 const LOG = auditPath()
 
+// 全量测试并行执行时，跑 agent loop 的用例也会往同一个临时 audit.log 追加，
+// 因此这里用唯一标记隔离，只断言本用例自己写入的记录。
+const MARK = `t-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+
 function entry(over: Partial<AuditEntry> = {}): AuditEntry {
   return {
     ts: Date.now(),
-    conv: 'c1',
+    conv: MARK,
     tool: 'run_command',
     args: '{"command":"ls"}',
     effect: 'exec',
@@ -25,7 +29,7 @@ function entry(over: Partial<AuditEntry> = {}): AuditEntry {
 async function waitLines(n: number, timeoutMs = 2000): Promise<AuditEntry[]> {
   const deadline = Date.now() + timeoutMs
   for (;;) {
-    const rows = await listAudit(500)
+    const rows = (await listAudit(500)).filter((r) => r.conv === MARK)
     if (rows.length >= n || Date.now() > deadline) return rows
     await new Promise((r) => setTimeout(r, 20))
   }
@@ -74,7 +78,7 @@ describe('audit 审计日志', () => {
     appendAudit(entry({ tool: 'after-rotate' }))
     await waitLines(1)
     expect(existsSync(`${LOG}.1`)).toBe(true)
-    const rows = await listAudit(10)
+    const rows = (await listAudit(50)).filter((r) => r.conv === MARK)
     // 轮转后的新文件只含新记录（旧的大文件被搬到 .1）
     expect(rows.some((r) => r.tool === 'after-rotate')).toBe(true)
   })

@@ -162,6 +162,50 @@ export const MCP_CATALOG: McpConnectorDef[] = [
     argFields: [{ label: 'Redis 地址', placeholder: 'redis://localhost:6379', required: true }]
   },
   {
+    id: 'sqlite',
+    name: 'SQLite 数据库',
+    icon: '🗄️',
+    category: '数据',
+    description: '查询本地 SQLite 数据库文件（.db/.sqlite）：看表结构、跑只读 SQL、做数据分析。',
+    command: 'npx',
+    args: ['-y', 'mcp-server-sqlite-npx'],
+    argFields: [
+      {
+        label: '数据库文件路径（绝对路径）',
+        placeholder: '/Users/you/data/cases.db',
+        required: true
+      }
+    ]
+  },
+  {
+    id: 'notion',
+    name: 'Notion',
+    icon: '📓',
+    category: '协作',
+    description:
+      '官方 Notion 连接器：检索页面、读写数据库条目。需要 Notion 集成令牌（内部集成，非 OAuth）。',
+    command: 'npx',
+    args: ['-y', '@notionhq/notion-mcp-server'],
+    envFields: [
+      {
+        key: 'NOTION_TOKEN',
+        label: 'Notion 集成令牌（ntn_… ，在 notion.so/my-integrations 创建）',
+        required: true,
+        secret: true
+      }
+    ]
+  },
+  {
+    id: 'time',
+    name: '时间与时区',
+    icon: '🕐',
+    category: '基础',
+    description:
+      '当前时间、时区换算、日期差计算（做时效/期限推算时比让模型心算可靠）。需本机已装 uv/uvx（Python）。',
+    command: 'uvx',
+    args: ['mcp-server-time']
+  },
+  {
     id: 'everything',
     name: '功能演示（测试用）',
     icon: '🧪',

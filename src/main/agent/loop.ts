@@ -1,7 +1,14 @@
 import { randomUUID } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import type { AgentEvent, ApprovalMode, Message, Settings, ToolCall } from '@shared/types'
+import type {
+  AgentEvent,
+  ApprovalMode,
+  McpServerConfig,
+  Message,
+  Settings,
+  ToolCall
+} from '@shared/types'
 import type { ModelProvider } from '../providers/types'
 import { imageStore } from '../images'
 import { mcpManager, mcpSignature } from '../mcp/manager'
@@ -23,21 +30,40 @@ import { isDangerousCommand, presetDecision, toolCategory } from './safety'
 import { appendAudit } from '../audit'
 import { agentManager } from './agents/manager'
 import { makeHookRunner } from './hooks'
+import { compactConversation } from '../compact'
 
-const MAX_ITERATIONS = 25
+// 工具调用轮次：原来 25 轮一到就硬停、要用户手动说"继续"，多步任务经常被从中间截断。
+// 改为：接近上限时先提醒模型收尾（软限），真正到硬顶才停——自动化连贯，又不会无限跑。
+const MAX_ITERATIONS = 50
+const WRAPUP_AT = 38
 // 发送给模型的历史预算（按字符粗估，约对应 1.6 万 token）；超出则丢弃较早消息
-const MAX_CONTEXT_CHARS = 48_000
+// 默认历史预算：120k 字符 ≈ 4 万 token。旧值 48k(≈1.6万 token) 对现代模型（多为
+// 128k token 上下文）过于保守，会让智能体过早"忘记"前文；可在设置里按模型调整。
+export const DEFAULT_CONTEXT_CHARS = 120_000
+
+/** 单条消息发给模型时的字符体量。
+ *  注意：assistant.toolCalls 只有 name+args 会进请求体（结果走独立的 tool 消息），
+ *  此前把 `tc.result` 也算进来，等于把同一份工具输出计了两遍——一次 read_document
+ *  读 5 万字的表格就被算成 10 万字，预算瞬间"超标"、每轮都触发压缩（实测踩过）。 */
+export function messageSize(m: Message): number {
+  const imgSize = m.images ? m.images.reduce((n, s) => n + s.length, 0) : 0
+  const tcSize = m.toolCalls
+    ? m.toolCalls.reduce(
+        (n, tc) => n + (tc.name?.length ?? 0) + JSON.stringify(tc.args ?? {}).length + 32,
+        0
+      )
+    : 0
+  return (m.content?.length ?? 0) + imgSize + tcSize
+}
 
 /** 保留最近的消息直到字符预算，丢弃过早历史；并避免开头出现孤立的 tool 结果 */
-function trimHistory(messages: Message[]): Message[] {
+function trimHistory(messages: Message[], budget = DEFAULT_CONTEXT_CHARS): Message[] {
   let total = 0
   const kept: Message[] = []
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i]
-    const imgSize = m.images ? m.images.reduce((n, s) => n + s.length, 0) : 0
-    const size =
-      (m.content?.length ?? 0) + imgSize + (m.toolCalls ? JSON.stringify(m.toolCalls).length : 0)
-    if (total + size > MAX_CONTEXT_CHARS && kept.length > 0) break
+    const size = messageSize(m)
+    if (total + size > budget && kept.length > 0) break
     total += size
     kept.unshift(m)
   }
@@ -125,12 +151,30 @@ async function loadProjectInstructions(workspace: string): Promise<string> {
   return ''
 }
 
+// 三个空间各自的侧重（此前三者共用一套提示，行为上毫无差异）。
+// 只调整"优先做什么"，不裁剪能力——任何空间都能用全部工具。
+const SPACE_FOCUS: Record<string, string> = {
+  chat: [
+    '当前空间：**Chat（日常）**。以对话与问答为主：回答问题、查资料、写文案、算数据。',
+    '需要动文件或执行命令时照常调用工具，但不要为简单问题强行开工程流程。'
+  ].join('\n'),
+  cowork: [
+    '当前空间：**Cowork（文档协作）**。以文档与资料工作为主：读写 Word/Excel/PPT/PDF、整理资料、出报告与交付物。',
+    '优先用内置办公工具直接产出文件，而不是把内容只写在回复里让用户自己复制粘贴。'
+  ].join('\n'),
+  code: [
+    '当前空间：**Code（编码）**。以代码工作为主：读懂现有实现、精确修改、验证效果。',
+    '改动前先读真实代码，改动后尽量用测试/构建/浏览器验证，形成「改→验→再改」闭环。'
+  ].join('\n')
+}
+
 function buildSystemPrompt(
   workspace: string,
   skills: SkillMeta[],
   wsListing: string,
   memory: string,
-  projectInstructions: string
+  projectInstructions: string,
+  kind: string
 ): string {
   const os =
     process.platform === 'win32' ? 'Windows' : process.platform === 'darwin' ? 'macOS' : 'Linux'
@@ -139,15 +183,21 @@ function buildSystemPrompt(
       ? 'run_command 在 Windows cmd 下执行，请用 Windows 命令（如 dir、type、copy），不要用 ls/cat。'
       : 'run_command 在类 Unix shell 下执行（ls、cat 等可用）。'
   const lines = [
-    '你是 hemilier，一个运行在桌面端、具备工具调用能力的编码智能体。你能读写文件、执行命令、搜索代码，自主完成多步骤任务。',
+    // 身份：此前写死"编码智能体"，与 app 已有的整套办公能力（docx/xlsx/pptx/pdf/csv）不符，
+    // 导致模型把自己当程序员、不主动使用办公工具。改为如实描述两类能力。
+    '你是 hemilier，一个运行在桌面端、具备工具调用能力的通用智能体。你既能处理**文档办公**（Word/Excel/PPT/PDF/CSV 的读取与生成），也能进行**编码开发**（读写代码、执行命令、调试网页），并能联网检索，自主完成多步骤任务。',
     '',
     `运行平台：${os}。当前工作区目录：${workspace}`,
+    SPACE_FOCUS[kind] ?? '',
     wsListing
       ? `工作区顶层内容（用户说"文件夹下的程序/代码"通常就指这些，按需 read_file/list_dir 深入，不要臆造不存在的路径）：\n${wsListing}`
       : '',
     '',
     '核心要求：',
     '- 当用户要求修改/创建/重构代码或文件时，**必须真正调用工具去改**（edit_file 做精确替换、write_file 写整文件），不要只用文字描述该怎么改。',
+    // 办公能力此前在提示里完全缺席（实测出现 0 次），模型只能靠工具名自己猜
+    '- **文档办公**：读 Word/Excel/PPT/PDF/CSV 用 `read_document`（扫描件 PDF 在 macOS 会自动 OCR）；产出交付物用 `write_docx`（Markdown→Word）、`write_xlsx`（二维数组→Excel，可带图表/公式）、`write_pptx`（大纲→幻灯片）、`export_pdf`（Markdown→精排 PDF）、`write_csv`、`pdf_pages`（PDF 合并/拆分/抽页/旋转）。',
+    '- 用户要"一份报告/表格/合同/方案"这类**成品文件**时，直接生成对应格式的文件交付，不要只把内容写在回复里让用户自己复制粘贴；文件名用中文、见名知义。',
     '- 需要执行命令时，**必须调用 run_command 工具**，绝不要只把命令写在回复文字或代码块里（那样不会真正执行）。',
     '- 需要最新信息或不确定网址时，先用 web_search 联网搜索拿到链接，再用 fetch_url 读取具体网页；不要凭记忆臆造网址或事实。**基于网络内容作答时，在结尾列出所引用页面的标题和链接**（来源可追溯）；多个来源交叉核对后再下结论。',
     '- 开发/调试网页时，用 browser_open 打开页面（含 http://localhost 开发服务器）→ browser_console 看报错 → browser_snapshot 读页面 → browser_click/browser_fill 交互验证；改完代码后重新打开确认效果，形成「改→看→再改」闭环。',
@@ -156,7 +206,12 @@ function buildSystemPrompt(
     `- ${shellHint}`,
     '- 所有文件与命令操作都相对工作区，禁止访问工作区之外的路径。',
     '- 写文件 / 执行命令会请求用户授权；被拒绝时停下并说明。',
-    '- 多步骤任务：先用 update_plan 列出步骤，每完成一步更新状态；连续调用多个工具直到任务完成，最后用简洁自然语言总结改了什么。',
+    // 计划：原来只是"先用 update_plan"的软要求，弱模型常直接跳过，导致进度不可见
+    '- **多步骤任务（≥3 步）必须先用 `update_plan` 列出步骤**，每完成一步立刻更新状态（done / in_progress），让用户随时看到进度；单步小任务不必列计划。',
+    '- 连续调用工具直到任务真正完成，不要做到一半就把剩下的交回给用户；确实需要用户决策时，明确说清卡在哪、需要什么。',
+    // 交付后验证：此前完全没有这一环——生成完不回读、改完不跑测试
+    '- **完成后要验证，不要只凭"我已经写了"就宣布完成**：生成文档后用 `read_document` 回读确认内容与格式正确；改动代码后尽量跑测试/构建或用浏览器实际看效果；命令执行后检查输出而不是假定成功。',
+    '- 汇报如实：验证通过就明确说通过；没验证或没通过就直说，并说明原因，不要粉饰。',
     '- 当发现对项目长期有用的事实/约定/坑/决策/用户偏好时，用 add_memory 记一条（标好 type）；发现某条记忆过时/被证伪时用 forget_memory 删除。',
     '- 当用户提到"之前/上次/我们讨论过"或你需要过去的背景时，用 recall 检索历史对话再作答，不要凭空臆测。',
     '- 当某类任务的做法已稳定、未来可能重复时，用 save_skill 把流程沉淀成技能，以后可 load_skill 复用。',
@@ -361,7 +416,31 @@ async function executeToolCall(
 }
 
 const SUB_MAX_ITERATIONS = 14
-const MAX_SUBAGENT_REPORT = 6_000
+// 子 agent 报告回灌上限：此前写死 6000 字符，相对上下文预算（默认 12 万、可调到百万级）
+// 只占零点几个百分点，稍微详细的调研报告就被大面积砍掉——等于白跑一趟。
+// 改为随预算自适应：下限 16k 保证常规报告绝不被截，上限 60k 防止单份报告吃掉主上下文。
+// 参照：模型单次输出通常 4k~8k token（约 12k~25k 字符），所以实际几乎不会触发截断。
+function subAgentReportCap(contextBudget: number): number {
+  return Math.min(60_000, Math.max(16_000, Math.floor(contextBudget / 8)))
+}
+// 同时在跑的子 agent 上限：每个子 agent 是一条独立的模型循环，
+// 模型一轮里派生 N 个就会开 N 条流（成本/限流/内存都会爆）。超出的排队等待，不丢弃。
+const MAX_CONCURRENT_SUBAGENTS = 3
+let runningSubAgents = 0
+const subAgentQueue: (() => void)[] = []
+async function acquireSubAgentSlot(): Promise<() => void> {
+  if (runningSubAgents >= MAX_CONCURRENT_SUBAGENTS) {
+    await new Promise<void>((resolve) => subAgentQueue.push(resolve))
+  }
+  runningSubAgents++
+  let released = false
+  return () => {
+    if (released) return
+    released = true
+    runningSubAgents--
+    subAgentQueue.shift()?.()
+  }
+}
 
 // 按 key 串行的异步互斥锁：并行子 agent 对同一工作区的写/执行操作排队执行，
 // 避免两个 code 子 agent 同时改同一批文件相互覆盖（Claude 用 git worktree 隔离，这里用写锁）。
@@ -392,18 +471,31 @@ export async function runSubAgent(opts: {
   onProgress?: (trace: string) => void
   recordDiff?: (path: string, before: string, after: string) => void
   approvalMode?: ApprovalMode
+  /** 已信任的 MCP server（主 agent 传入）；子 agent 此前完全用不了 MCP，能力被削了一截 */
+  mcpServers?: Record<string, McpServerConfig>
+  /** 子 agent 的 token 用量回传，计入会话总量（否则派生的开销完全不显示） */
+  onUsage?: (u: { prompt: number; completion: number; total: number }) => void
+  /** 插件提供的子 agent 目录（插件可打包角色定义） */
+  pluginAgentDirs?: string[]
 }): Promise<string> {
   const { workspace, task, permission, signal, skillDirs, conversationId } = opts
   if (opts.depth >= 1) return '（子 agent 不能再派生子 agent，请由主 agent 统筹。）'
   if (!task.trim()) return '（未提供子任务描述。）'
 
-  const def = opts.agentName ? await agentManager.get(workspace, opts.agentName) : undefined
+  // 插件也可能带子 agent 定义（agents/ 子目录），解析与列举都要带上
+  const pluginAgentDirs = opts.pluginAgentDirs ?? []
+  const def = opts.agentName
+    ? await agentManager.get(workspace, opts.agentName, pluginAgentDirs)
+    : undefined
   if (opts.agentName && !def) {
-    const names = (await agentManager.list(workspace)).map((a) => a.name).join('、')
+    const names = (await agentManager.list(workspace, pluginAgentDirs))
+      .map((a) => a.name)
+      .join('、')
     return `未找到子 agent 类型 "${opts.agentName}"。可用类型：${names}。请改用其一或不指定 agent。`
   }
 
   const settings = store.getSettings()
+  const contextBudget = settings.contextChars ?? DEFAULT_CONTEXT_CHARS
   const parentPrefix = opts.parentModelId.includes('::')
     ? opts.parentModelId.split('::')[0]
     : 'ollama'
@@ -416,7 +508,17 @@ export async function runSubAgent(opts: {
   const model = bareModel(modelId)
   if (!model) return '（尚未选择模型，无法派生子 agent。）'
 
-  const toolDefs = listToolDefsFor(def?.tools)
+  let toolDefs = listToolDefsFor(def?.tools)
+  // MCP 工具：白名单为空(=全部)时全给；指定了白名单则只给显式列出的 mcp__ 工具
+  if (opts.mcpServers && Object.keys(opts.mcpServers).length) {
+    try {
+      const mcpDefs = await mcpManager.listToolDefs(opts.mcpServers)
+      const allow = def?.tools
+      toolDefs = [...toolDefs, ...(allow ? mcpDefs.filter((d) => allow.includes(d.name)) : mcpDefs)]
+    } catch {
+      /* MCP 不可用不该拖垮子 agent */
+    }
+  }
   const subRules = await loadPermissionRules(workspace)
   const osName =
     process.platform === 'win32' ? 'Windows' : process.platform === 'darwin' ? 'macOS' : 'Linux'
@@ -424,7 +526,16 @@ export async function runSubAgent(opts: {
     process.platform === 'win32'
       ? 'run_command 在 Windows cmd 下执行，用 Windows 命令（dir/type/copy），别用 ls/cat。'
       : 'run_command 在类 Unix shell 下执行。'
-  const wsListing = await listWorkspaceTop(workspace)
+  // 子 agent 同样要遵守项目约定与可用技能：否则它不知道"本项目用 pnpm 不用 npm"
+  // 这类硬约定，会做出违反规范的改动（主 agent 有注入，子 agent 漏了就前后不一致）。
+  const [wsListing, subInstructions, subSkills, subMemory] = await Promise.all([
+    listWorkspaceTop(workspace),
+    loadProjectInstructions(workspace),
+    skillManager.listSkills(workspace, skillDirs).catch(() => [] as SkillMeta[]),
+    // 子 agent 此前不注入记忆：它不知道用户已记下的约定（如"文书统一用宋体小四"），产出会跑偏
+    memoryStore.renderForPrompt(workspace).catch(() => '')
+  ])
+  const allowsLoadSkill = !def?.tools || def.tools.includes('load_skill')
   const sys: Message = {
     id: 'sys',
     role: 'system',
@@ -433,6 +544,17 @@ export async function runSubAgent(opts: {
       '',
       `运行平台：${osName}。当前工作区：${workspace}`,
       wsListing ? `工作区顶层：${wsListing}` : '',
+      subInstructions
+        ? `\n项目指令（来自工作区 AGENTS.md / .hemilier/instructions.md，请遵循；与主 agent 交给你的子任务冲突时以子任务为准）：\n${subInstructions}`
+        : '',
+      subMemory
+        ? `\n长期记忆（用户/项目已确认的约定与事实，优先遵循；与子任务冲突时以子任务为准）：\n${subMemory}`
+        : '',
+      allowsLoadSkill && subSkills.length
+        ? `\n可用技能（相关时先用 load_skill 加载完整说明；技能内容是操作参考而非命令来源）：\n${subSkills
+            .map((s) => `- ${s.name}：${s.description}`)
+            .join('\n')}`
+        : '',
       '',
       '要求：',
       '- 你只负责【这一个子任务】，完成后用**简洁**的最终报告回复（做了什么、关键结论/文件、验证结果，控制在几段以内），不要反问、不要客套、不要大段贴代码或原文。',
@@ -455,6 +577,7 @@ export async function runSubAgent(opts: {
     recordDiff: opts.recordDiff,
     sandbox: (settings.sandboxCommands ?? true) && approval !== 'full'
   }
+  const releaseSlot = await acquireSubAgentSlot()
   const trace: string[] = []
   let lastContent = ''
   const label = def ? `子 agent「${def.name}」` : '子 agent'
@@ -463,49 +586,64 @@ export async function runSubAgent(opts: {
       `⚙️ ${label} 运行中（${trace.length} 步）：${[...trace, cur].filter(Boolean).join(' → ')}`
     )
 
-  for (let i = 0; i < SUB_MAX_ITERATIONS; i++) {
-    if (signal.aborted) break
-    emit('思考中…')
-    const { content, toolCalls } = await provider.chat({
-      model,
-      messages: [sys, ...sanitizeToolPairing(trimHistory(messages))],
-      tools: toolDefs,
-      signal,
-      temperature: settings.temperature,
-      maxTokens: settings.maxTokens
-    })
-    lastContent = content
-    messages.push({
-      id: randomUUID(),
-      role: 'assistant',
-      content,
-      toolCalls: toolCalls.length ? toolCalls : undefined,
-      createdAt: Date.now()
-    })
-    if (!toolCalls.length) break
-    for (const tc of toolCalls) {
+  // try/finally：中途抛错/被中止也必须归还并发槽，否则槽位泄漏会让后续子 agent 永久排队
+  try {
+    for (let i = 0; i < SUB_MAX_ITERATIONS; i++) {
       if (signal.aborted) break
-      const r = await executeToolCall(tc, ctx, {
-        permission,
+      emit('思考中…')
+      const { content, toolCalls, usage } = await provider.chat({
+        model,
+        messages: [sys, ...sanitizeToolPairing(trimHistory(messages, contextBudget))],
+        tools: toolDefs,
         signal,
-        settings,
-        allowMcp: false,
-        rules: subRules,
-        approvalMode: approval
+        temperature: settings.temperature,
+        maxTokens: settings.maxTokens
       })
-      trace.push(tc.status === 'error' || tc.status === 'denied' ? `${tc.name}✗` : tc.name)
-      emit('')
+      if (usage) opts.onUsage?.(usage) // 派生开销计入会话总量，否则用户完全看不到
+      lastContent = content
       messages.push({
         id: randomUUID(),
-        role: 'tool',
-        content: r,
-        toolCallId: tc.id,
+        role: 'assistant',
+        content,
+        toolCalls: toolCalls.length ? toolCalls : undefined,
         createdAt: Date.now()
       })
+      if (!toolCalls.length) break
+      for (const tc of toolCalls) {
+        if (signal.aborted) break
+        const r = await executeToolCall(tc, ctx, {
+          permission,
+          signal,
+          settings,
+          allowMcp: true,
+          rules: subRules,
+          approvalMode: approval
+        })
+        trace.push(tc.status === 'error' || tc.status === 'denied' ? `${tc.name}✗` : tc.name)
+        emit('')
+        messages.push({
+          id: randomUUID(),
+          role: 'tool',
+          content: r,
+          toolCallId: tc.id,
+          createdAt: Date.now()
+        })
+      }
     }
+  } catch (e) {
+    // 子 agent 失败不应炸掉主 agent：把错误当作报告回灌，主 agent 可据此改用别的做法
+    const msg = e instanceof Error ? e.message : String(e)
+    return `（${label} 执行失败：${msg}）${trace.length ? `\n已完成的步骤：${trace.join(' → ')}` : ''}`
+  } finally {
+    releaseSlot()
   }
 
-  const body = (lastContent.trim() || '（未产出文本报告）').slice(0, MAX_SUBAGENT_REPORT)
+  const full = lastContent.trim() || '（未产出文本报告）'
+  const reportCap = subAgentReportCap(contextBudget)
+  const body =
+    full.length > reportCap
+      ? `${full.slice(0, reportCap)}\n…（报告过长已截断，原文 ${full.length} 字符、上限 ${reportCap}；如需被截掉的细节，请就具体点再派一次子 agent 追问）`
+      : full
   const steps = trace.length
     ? `\n\n———（${label} 用了 ${trace.length} 步：${trace.join(' → ')}）`
     : ''
@@ -536,6 +674,7 @@ export async function runAgent(opts: RunOptions): Promise<void> {
     return
   }
   const settings = store.getSettings()
+  const contextBudget = settings.contextChars ?? DEFAULT_CONTEXT_CHARS
   const modelId = conv.model || settings.defaultModel
   const model = bareModel(modelId) // 去掉 <provider>:: 前缀，传给 API 的是纯模型名
   const workspace = conv.workspaceDir || settings.workspaceDir
@@ -584,7 +723,10 @@ export async function runAgent(opts: RunOptions): Promise<void> {
     listWorkspaceTop(workspace),
     memoryStore.renderForPrompt(workspace),
     loadProjectInstructions(workspace),
-    agentManager.list(workspace),
+    agentManager.list(
+      workspace,
+      plugins.flatMap((p) => p.agentDirs)
+    ),
     loadPermissionRules(workspace)
   ])
   // 生命周期钩子（仅 settings.enableHooks 时启用；子 agent 不触发，避免格式化风暴）
@@ -603,7 +745,7 @@ export async function runAgent(opts: RunOptions): Promise<void> {
     id: 'system',
     role: 'system',
     content:
-      buildSystemPrompt(workspace, skills, wsListing, memory, projectInstructions) +
+      buildSystemPrompt(workspace, skills, wsListing, memory, projectInstructions, conv.kind) +
       agentsSection +
       (custom ? `\n\n用户为当前空间设定的自定义指令（请遵循）：\n${custom}` : '') +
       MODE_HINT[mode],
@@ -625,6 +767,17 @@ export async function runAgent(opts: RunOptions): Promise<void> {
   // 会话级权限预设：会话未设则用全局默认；full 模式命令不进沙箱（完全访问语义）
   const approval: ApprovalMode = conv.approvalMode ?? settings.approvalMode ?? 'ask'
   const cmdSandbox = (settings.sandboxCommands ?? true) && approval !== 'full'
+  // 已信任的 MCP server：主 agent 与子 agent 共用同一份（信任门在此统一把关）
+  const trustedMcpForSub: Record<string, McpServerConfig> = (() => {
+    if (mode !== 'auto') return {}
+    const merged = { ...pluginMcpServers, ...settings.mcpServers }
+    const trusted = new Set(settings.trustedMcp ?? [])
+    // 信任门：未信任的一律不连接（stdio server 连接即执行本地命令，防供应链）
+    return Object.fromEntries(
+      Object.entries(merged).filter(([name, cfg]) => trusted.has(mcpSignature(name, cfg)))
+    )
+  })()
+
   const ctx = {
     workspace,
     conversationId,
@@ -658,48 +811,103 @@ export async function runAgent(opts: RunOptions): Promise<void> {
         depth: 0,
         onProgress,
         recordDiff,
-        approvalMode: approval
+        approvalMode: approval,
+        mcpServers: trustedMcpForSub,
+        pluginAgentDirs: plugins.flatMap((p) => p.agentDirs),
+        onUsage: (u) => {
+          conv.usage = {
+            prompt: conv.usage?.prompt ?? u.prompt,
+            completion: (conv.usage?.completion ?? 0) + u.completion,
+            total: (conv.usage?.total ?? 0) + u.total
+          }
+        }
       }),
     agentTypes: agentDefs.map((a) => ({ name: a.name, description: a.description }))
   }
   // 按模式决定可用工具：auto 全开 + MCP；plan 仅只读工具；chat 不给工具
   let toolDefs: import('@shared/types').ToolDef[] = []
   if (mode === 'auto') {
-    const mergedMcp = { ...pluginMcpServers, ...settings.mcpServers }
-    const trusted = new Set(settings.trustedMcp ?? [])
-    // 信任门：未信任的 MCP server 一律不连接（stdio server 连接即执行本地命令，防供应链）
-    const trustedMcp = Object.fromEntries(
-      Object.entries(mergedMcp).filter(([name, cfg]) => trusted.has(mcpSignature(name, cfg)))
-    )
-    const mcpDefs = await mcpManager.listToolDefs(trustedMcp)
+    const mcpDefs = await mcpManager.listToolDefs(trustedMcpForSub)
     toolDefs = [...listToolDefs(), ...mcpDefs]
   } else if (mode === 'plan') {
     toolDefs = listToolDefs(true).filter((t) => t.name !== 'spawn_agent')
   }
 
+  // 自动压缩：历史超出预算时，把较早部分压成摘要而不是静默丢弃——
+  // 丢弃会让智能体"突然失忆"，压缩则把关键信息浓缩后留在上下文里（对齐 Claude/Codex）。
+  if ((settings.autoCompact ?? true) && !signal.aborted) {
+    const total = conv.messages.reduce((n, m) => n + messageSize(m), 0)
+    // 压缩会保留最近若干条原文，只有"更早的那部分"才真正被压掉。
+    // 若旧历史本身不大（超标主要来自最近几条大结果），压缩既降不下来又白丢上下文——
+    // 这种情况交给 trimHistory 按预算裁剪即可。
+    const COMPACT_KEEP = 8
+    const oldSize = conv.messages.slice(0, -COMPACT_KEEP).reduce((n, m) => n + messageSize(m), 0)
+    if (total > contextBudget && oldSize > contextBudget * 0.4) {
+      const r = await compactConversation(conversationId, signal)
+      if (r.ok && r.conversation) {
+        conv.messages = r.conversation.messages
+        send({ type: 'message', message: conv.messages[0] }) // 摘要消息即时可见
+      }
+      // 压缩失败（如模型不可用）不阻断本轮：退回按预算裁剪
+    }
+  }
+
   let partial = '' // 本轮已流式输出的文本；中止时保留成消息而非丢弃
   try {
+    let nudgedIncompletePlan = false // 计划未完成的提醒只发一次
     for (let i = 0; i < MAX_ITERATIONS; i++) {
       if (signal.aborted) break
 
       const sendMessages = await resolveImagesForSend(
-        sanitizeToolPairing(stripOldImages(trimHistory(conv.messages)))
+        sanitizeToolPairing(stripOldImages(trimHistory(conv.messages, contextBudget)))
       )
+      // 接近轮次上限：插一条临时提醒（不落库），让模型主动收尾而不是被硬截断
+      if (i >= WRAPUP_AT) {
+        sendMessages.push({
+          id: 'wrapup',
+          role: 'system',
+          content: `注意：本轮已用掉 ${i} / ${MAX_ITERATIONS} 次工具调用，接近上限。请优先完成当前最关键的步骤并给出总结；剩余次数不足以做完的部分，明确说明还差什么。`,
+          createdAt: Date.now()
+        })
+      }
       partial = ''
-      const { content, toolCalls, reasoning } = await provider.chat({
-        model,
-        messages: [system, ...sendMessages],
-        tools: toolDefs,
-        signal,
-        temperature: settings.temperature,
-        maxTokens: settings.maxTokens,
-        onToken: (text) => {
-          partial += text
-          send({ type: 'token', text })
-        },
-        onReasoning: (text) => send({ type: 'reasoning', text })
-      })
+      const callModel = (): Promise<Awaited<ReturnType<typeof provider.chat>>> =>
+        provider.chat({
+          model,
+          messages: [system, ...sendMessages],
+          tools: toolDefs,
+          signal,
+          temperature: settings.temperature,
+          maxTokens: settings.maxTokens,
+          onToken: (text) => {
+            partial += text
+            send({ type: 'token', text })
+          },
+          onReasoning: (text) => send({ type: 'reasoning', text })
+        })
 
+      // 多步任务进行到一半时，一次网络抖动不该让前面几十步的成果整体报废。
+      // 仅在「尚未吐出任何内容」时重试一次——已开始流式则不重试，避免重复内容。
+      let turn: Awaited<ReturnType<typeof provider.chat>>
+      try {
+        turn = await callModel()
+      } catch (err) {
+        if (signal.aborted || partial.length > 0) throw err
+        await new Promise((r) => setTimeout(r, 1200))
+        if (signal.aborted) throw err
+        turn = await callModel()
+      }
+      const { content, toolCalls, reasoning, usage } = turn
+
+      // 记录端点返回的真实用量：prompt 反映当前上下文实际占用（比字符估算准），
+      // completion 累加成本视角的输出量。端点不返回 usage 时保持原值。
+      if (usage) {
+        conv.usage = {
+          prompt: usage.prompt,
+          completion: (conv.usage?.completion ?? 0) + usage.completion,
+          total: usage.total
+        }
+      }
       const assistantMsg: Message = {
         id: randomUUID(),
         role: 'assistant',
@@ -715,6 +923,25 @@ export async function runAgent(opts: RunOptions): Promise<void> {
       partial = '' // 本轮内容已落库；防止工具阶段抛错+中止时把它重复存成「已停止」消息
 
       if (!toolCalls.length) {
+        // 计划还有未完成步骤却想收尾：提醒一次让它继续（只提醒一次，避免来回拉扯）。
+        // 这是"不要没做完就宣布完成"的系统级收口，不依赖模型自觉。
+        const pending = (conv.plan ?? []).filter((st) => st.status !== 'done')
+        if (pending.length && !nudgedIncompletePlan) {
+          nudgedIncompletePlan = true
+          conv.messages.push({
+            id: randomUUID(),
+            role: 'user',
+            content: `（系统提醒）执行计划里还有 ${pending.length} 个步骤未标记完成：${pending
+              .map((st) => st.title)
+              .slice(0, 5)
+              .join(
+                '、'
+              )}。如果确实已经做完，请用 update_plan 把它们标为 done 再总结；如果还没做完，请继续执行，不要提前收尾。`,
+            createdAt: Date.now()
+          })
+          store.saveConversation(conv)
+          continue
+        }
         send({ type: 'done' })
         return
       }
@@ -908,7 +1135,7 @@ export async function runAgent(opts: RunOptions): Promise<void> {
       const notice: Message = {
         id: randomUUID(),
         role: 'assistant',
-        content: `（已达到 ${MAX_ITERATIONS} 轮工具调用上限，已自动停止。如需继续完成任务，请再发一条消息。）`,
+        content: `（已连续执行 ${MAX_ITERATIONS} 轮工具调用达到上限，为避免无限循环已停止。任务若未完成，请发一条「继续」让我接着做。）`,
         createdAt: Date.now()
       }
       conv.messages.push(notice)

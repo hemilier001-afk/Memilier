@@ -20,6 +20,8 @@ interface Connected {
 class McpManager {
   private clients = new Map<string, Connected>()
   private routes = new Map<string, { server: string; tool: string }>()
+  /** 最近一次连接失败的原因（按 server 名） */
+  private lastError = new Map<string, string>()
   /** 正在建立中的连接（并行场景下对同一 server 去重，避免重复 spawn/握手） */
   private connecting = new Map<string, Promise<Connected | null>>()
 
@@ -31,9 +33,17 @@ class McpManager {
   private makeTransport(cfg: McpServerConfig): Transport {
     if (cfg.url) {
       const url = new URL(cfg.url)
+      // 远程 MCP 网关普遍需要鉴权（Authorization: Bearer …）；没有这一步只会拿到 401
+      const reqInit: RequestInit | undefined = cfg.headers ? { headers: cfg.headers } : undefined
       return cfg.type === 'sse'
-        ? new SSEClientTransport(url)
-        : new StreamableHTTPClientTransport(url)
+        ? new SSEClientTransport(url, {
+            requestInit: reqInit,
+            // SSE 的事件流是独立连接，鉴权头要单独给一次
+            eventSourceInit: cfg.headers
+              ? ({ headers: cfg.headers } as unknown as EventSourceInit)
+              : undefined
+          })
+        : new StreamableHTTPClientTransport(url, { requestInit: reqInit })
     }
     if (!cfg.command) throw new Error('MCP 配置需提供 command（stdio）或 url（http/sse）')
     return new StdioClientTransport({
@@ -93,6 +103,8 @@ class McpManager {
       return connected
     } catch (e) {
       console.error(`[mcp] 连接 server "${name}" 失败：`, e)
+      // 记下真实原因供 UI 显示：此前只打日志，界面只能给"连接失败"这种没法行动的提示
+      this.lastError.set(name, e instanceof Error ? e.message : String(e))
       return null
     }
   }
@@ -144,7 +156,16 @@ class McpManager {
         if (cfg.enabled === false) return { name, ok: false, toolCount: 0, error: '已禁用' }
         const conn = await this.ensure(name, cfg)
         if (!conn) {
-          return { name, ok: false, toolCount: 0, error: '连接失败（命令/路径是否正确？）' }
+          const raw = this.lastError.get(name) ?? ''
+          // 远程 server 没有"命令/路径"，笼统提示会把人带错方向；401/403 直接点明是鉴权
+          const hint = /\b(401|Unauthorized)\b/i.test(raw)
+            ? '需要鉴权：该远程 server 要求令牌，请在高级 JSON 里给它加 headers（如 {"Authorization":"Bearer …"}）'
+            : /\b(403|Forbidden)\b/i.test(raw)
+              ? '鉴权被拒（403）：令牌无效或权限不足'
+              : cfg.url
+                ? '远程连接失败（URL 是否正确？是否需要鉴权头？）'
+                : '连接失败（命令/路径是否正确？是否已装 Node.js/npx？）'
+          return { name, ok: false, toolCount: 0, error: raw ? `${hint}｜${raw}` : hint }
         }
         try {
           const { tools } = await conn.client.listTools()
@@ -209,5 +230,9 @@ export const mcpManager = new McpManager()
 
 /** 供信任门用的稳定签名（name + 配置）：配置变化即需重新信任 */
 export function mcpSignature(name: string, cfg: McpServerConfig): string {
-  return `${name}::${JSON.stringify([cfg.command, cfg.args ?? [], cfg.env ?? {}, cfg.url, cfg.type])}`
+  const parts: unknown[] = [cfg.command, cfg.args ?? [], cfg.env ?? {}, cfg.url, cfg.type]
+  // headers 只在真的有的时候才参与签名：无条件加进去会让所有老用户已授信的条目
+  // 签名全变、集体退回"未信任"（现有 MCP 突然失效），这是不能接受的回归。
+  if (cfg.headers && Object.keys(cfg.headers).length) parts.push(cfg.headers)
+  return `${name}::${JSON.stringify(parts)}`
 }

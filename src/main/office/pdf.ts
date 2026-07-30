@@ -15,6 +15,7 @@ function inline(s: string): string {
     .replace(/`([^`]+)`/g, '<code>$1</code>')
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+    .replace(/~~([^~]+)~~/g, '<del>$1</del>')
     .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2">$1</a>')
 }
 
@@ -23,11 +24,21 @@ export function mdToHtml(md: string): string {
   const lines = md.replace(/\r\n/g, '\n').split('\n')
   const out: string[] = []
   let i = 0
-  let listType: 'ul' | 'ol' | null = null
+  // 列表栈：支持按缩进嵌套（原来只有一个 listType，多层列表被拍平成一层）
+  const stack: ('ul' | 'ol')[] = []
   const closeList = (): void => {
-    if (listType) {
-      out.push(`</${listType}>`)
-      listType = null
+    while (stack.length) out.push(`</${stack.pop()}>`)
+  }
+  const indentLevel = (l: string): number =>
+    Math.min(Math.floor(/^[\t ]*/.exec(l)![0].replace(/\t/g, '  ').length / 2), 4)
+  const openList = (kind: 'ul' | 'ol', level: number): void => {
+    while (stack.length > level + 1) out.push(`</${stack.pop()}>`)
+    if (stack.length === level + 1 && stack[level] !== kind) {
+      out.push(`</${stack.pop()}>`)
+    }
+    while (stack.length < level + 1) {
+      out.push(`<${kind}>`)
+      stack.push(kind)
     }
   }
   while (i < lines.length) {
@@ -65,23 +76,21 @@ export function mdToHtml(md: string): string {
       }
       continue
     }
-    const h = /^(#{1,4})\s+(.*)$/.exec(line)
+    if (/^\s*<!--\s*(pagebreak|分页)\s*-->\s*$/i.test(line)) {
+      closeList()
+      out.push('<div style="page-break-after:always"></div>')
+      i++
+      continue
+    }
+    const h = /^(#{1,6})\s+(.*)$/.exec(line)
     if (h) {
       closeList()
       out.push(`<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`)
     } else if (/^\s*[-*]\s+/.test(line)) {
-      if (listType !== 'ul') {
-        closeList()
-        out.push('<ul>')
-        listType = 'ul'
-      }
+      openList('ul', indentLevel(line))
       out.push(`<li>${inline(line.replace(/^\s*[-*]\s+/, ''))}</li>`)
     } else if (/^\s*\d+\.\s+/.test(line)) {
-      if (listType !== 'ol') {
-        closeList()
-        out.push('<ol>')
-        listType = 'ol'
-      }
+      openList('ol', indentLevel(line))
       out.push(`<li>${inline(line.replace(/^\s*\d+\.\s+/, ''))}</li>`)
     } else if (/^\s*>\s?/.test(line)) {
       closeList()
@@ -118,6 +127,10 @@ const PRINT_CSS = `
   blockquote { border-left: 3px solid #d8d6ce; margin: 0.6em 0; padding: 2px 14px; color: #6f6d66; }
   hr { border: none; border-top: 0.75px solid #d8d6ce; margin: 1.4em 0; }
   a { color: #262624; }
+  h4 { font-size: 11.5pt; margin-top: 1.1em; }
+  h5, h6 { font-size: 11pt; margin-top: 1em; color: #3d3d3a; }
+  del { color: #8f8d85; }
+  ul ul, ol ol, ul ol, ol ul { margin: 0.2em 0; }
 `
 
 /** markdown → PDF 字节（主进程内起隐藏窗口打印；仅运行时可用） */

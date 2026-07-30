@@ -54,6 +54,17 @@ export function SettingsModal(): JSX.Element | null {
   const [agents, setAgents] = useState<AgentInfo[]>([])
   const [providers, setProviders] = useState<ProviderConfig[]>([])
   const [auditRows, setAuditRows] = useState<import('@shared/types').AuditEntry[]>([])
+  // 子 agent 编辑器（null=不在编辑）
+  const [agentEdit, setAgentEdit] = useState<{
+    name: string
+    description: string
+    tools: string
+    model: string
+    prompt: string
+    scope: 'workspace' | 'global'
+    isNew: boolean
+  } | null>(null)
+  const [agentMsg, setAgentMsg] = useState<string | null>(null)
   const [appVersion, setAppVersion] = useState('')
 
   useEffect(() => {
@@ -112,6 +123,43 @@ export function SettingsModal(): JSX.Element | null {
     const dir = await window.api.pickWorkspace()
     if (dir) await update({ workspaceDir: dir })
   }
+  const reloadAgents = async (): Promise<void> => {
+    setAgents(await window.api.listAgents(useStore.getState().settings?.workspaceDir ?? ''))
+  }
+  const saveAgent = async (): Promise<void> => {
+    if (!agentEdit) return
+    setAgentMsg(null)
+    const ws = useStore.getState().settings?.workspaceDir ?? ''
+    const r = await window.api.saveAgent(ws, agentEdit.scope, {
+      name: agentEdit.name,
+      description: agentEdit.description,
+      tools: agentEdit.tools,
+      model: agentEdit.model,
+      prompt: agentEdit.prompt
+    })
+    if (!r.ok) {
+      setAgentMsg(`✗ ${r.error}`)
+      return
+    }
+    setAgentEdit(null)
+    await reloadAgents()
+  }
+  const removeAgent = async (a: AgentInfo): Promise<void> => {
+    if (a.source === 'builtin') return
+    if (!window.confirm(t('agentDeleteConfirm').replace('{n}', a.name))) return
+    const ws = useStore.getState().settings?.workspaceDir ?? ''
+    await window.api.removeAgent(ws, a.source as 'workspace' | 'global', a.name)
+    await reloadAgents()
+  }
+
+  // 技能/子agent 的来源标签本地化（builtin/workspace/global/plugin）
+  const srcLabel = (src: string): string =>
+    ({
+      builtin: t('srcBuiltin'),
+      workspace: t('srcWorkspace'),
+      global: t('srcGlobal'),
+      plugin: t('srcPlugin')
+    })[src] ?? src
   if (!open || !settings) return null
 
   const CATS: { key: Cat; label: string; icon: string }[] = [
@@ -290,6 +338,33 @@ export function SettingsModal(): JSX.Element | null {
                   </div>
                 </div>
                 <p className="text-xs text-muted">{t('temperatureLabel')}</p>
+                <div>
+                  <label className={label}>{t('contextLabel')}</label>
+                  <input
+                    type="number"
+                    step="10000"
+                    min="8000"
+                    key={`ctx-${settings.contextChars ?? ''}`}
+                    defaultValue={settings.contextChars ?? ''}
+                    placeholder="120000"
+                    onBlur={(e) =>
+                      void update({
+                        contextChars: e.target.value === '' ? undefined : Number(e.target.value)
+                      })
+                    }
+                    className={input}
+                  />
+                  <p className={hint}>{t('contextHint')}</p>
+                  <label className="mt-2 flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={settings.autoCompact ?? true}
+                      onChange={(e) => void update({ autoCompact: e.target.checked })}
+                    />
+                    {t('autoCompactLabel')}
+                  </label>
+                  <p className={hint}>{t('autoCompactHint')}</p>
+                </div>
                 <div>
                   <label className={label}>{t('theme')}</label>
                   <select
@@ -673,30 +748,157 @@ export function SettingsModal(): JSX.Element | null {
             {cat === 'skills' && (
               <div className="space-y-6">
                 <div>
-                  <h3 className="mb-1 text-[13px] font-semibold text-fg">{t('agentsTitle')}</h3>
-                  <p className="mb-2 text-xs leading-relaxed text-muted">{t('agentsHint')}</p>
-                  <div>
-                    {agents.map((a) => (
-                      <div key={a.name} className="flex items-center gap-3.5 py-2.5">
-                        <AppIcon muted>
-                          <UsersIcon className="h-5 w-5" />
-                        </AppIcon>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
-                            <span className="truncate text-[15px] font-semibold text-fg">
-                              {a.name}
-                            </span>
-                            <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-muted">
-                              {a.source}
-                            </span>
-                          </div>
-                          {a.description && (
-                            <p className="truncate text-[13px] text-muted">{a.description}</p>
-                          )}
-                        </div>
-                      </div>
-                    ))}
+                  <div className="mb-1 flex items-center justify-between">
+                    <h3 className="text-[13px] font-semibold text-fg">{t('agentsTitle')}</h3>
+                    {!agentEdit && (
+                      <button
+                        onClick={() =>
+                          setAgentEdit({
+                            name: '',
+                            description: '',
+                            tools: '',
+                            model: '',
+                            prompt: '',
+                            scope: 'workspace',
+                            isNew: true
+                          })
+                        }
+                        className="rounded-lg border border-line bg-surface-2 px-3 py-1 text-xs text-fg transition hover:bg-accent-soft"
+                      >
+                        + {t('agentNew')}
+                      </button>
+                    )}
                   </div>
+                  <p className="mb-2 text-xs leading-relaxed text-muted">{t('agentsHint')}</p>
+
+                  {agentEdit ? (
+                    <div className="space-y-2.5 rounded-xl border border-line p-3.5">
+                      <div className="flex gap-2">
+                        <input
+                          value={agentEdit.name}
+                          onChange={(e) => setAgentEdit({ ...agentEdit, name: e.target.value })}
+                          placeholder={t('agentNamePh')}
+                          disabled={!agentEdit.isNew}
+                          className={`${input} disabled:opacity-60`}
+                        />
+                        <select
+                          value={agentEdit.scope}
+                          onChange={(e) =>
+                            setAgentEdit({
+                              ...agentEdit,
+                              scope: e.target.value as 'workspace' | 'global'
+                            })
+                          }
+                          className={input}
+                        >
+                          <option value="workspace">{t('srcWorkspace')}</option>
+                          <option value="global">{t('srcGlobal')}</option>
+                        </select>
+                      </div>
+                      <input
+                        value={agentEdit.description}
+                        onChange={(e) =>
+                          setAgentEdit({ ...agentEdit, description: e.target.value })
+                        }
+                        placeholder={t('agentDescPh')}
+                        className={input}
+                      />
+                      <div className="flex gap-2">
+                        <input
+                          value={agentEdit.tools}
+                          onChange={(e) => setAgentEdit({ ...agentEdit, tools: e.target.value })}
+                          placeholder={t('agentToolsPh')}
+                          className={input}
+                        />
+                        <input
+                          value={agentEdit.model}
+                          onChange={(e) => setAgentEdit({ ...agentEdit, model: e.target.value })}
+                          placeholder={t('agentModelPh')}
+                          className={input}
+                        />
+                      </div>
+                      <textarea
+                        value={agentEdit.prompt}
+                        onChange={(e) => setAgentEdit({ ...agentEdit, prompt: e.target.value })}
+                        placeholder={t('agentPromptPh')}
+                        rows={6}
+                        className={`${input} font-mono text-xs`}
+                      />
+                      {agentMsg && <p className="text-xs text-red-500">{agentMsg}</p>}
+                      <div className="flex justify-end gap-2">
+                        <button
+                          onClick={() => {
+                            setAgentEdit(null)
+                            setAgentMsg(null)
+                          }}
+                          className="rounded-lg px-3 py-1.5 text-xs text-muted hover:text-fg"
+                        >
+                          {t('cancel')}
+                        </button>
+                        <button
+                          onClick={() => void saveAgent()}
+                          className="rounded-lg border border-line bg-surface-2 px-3 py-1.5 text-xs text-fg transition hover:bg-accent-soft"
+                        >
+                          {t('save')}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      {agents.map((a) => (
+                        <div key={a.name} className="group flex items-center gap-3.5 py-2.5">
+                          <AppIcon muted>
+                            <UsersIcon className="h-5 w-5" />
+                          </AppIcon>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="truncate text-[15px] font-semibold text-fg">
+                                {a.name}
+                              </span>
+                              <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-muted">
+                                {srcLabel(a.source)}
+                              </span>
+                              {a.model && (
+                                <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-muted">
+                                  {a.model}
+                                </span>
+                              )}
+                            </div>
+                            {a.description && (
+                              <p className="truncate text-[13px] text-muted">{a.description}</p>
+                            )}
+                          </div>
+                          {/* 内置角色不可改：复制一份成自定义再改（避免升级时被覆盖） */}
+                          <div className="flex shrink-0 gap-2 text-xs opacity-0 transition group-hover:opacity-100">
+                            <button
+                              onClick={() =>
+                                setAgentEdit({
+                                  name: a.source === 'builtin' ? `${a.name}-自定义` : a.name,
+                                  description: a.description,
+                                  tools: a.tools ?? '',
+                                  model: a.model ?? '',
+                                  prompt: a.prompt ?? '',
+                                  scope: a.source === 'global' ? 'global' : 'workspace',
+                                  isNew: a.source === 'builtin'
+                                })
+                              }
+                              className="text-muted hover:text-fg"
+                            >
+                              {a.source === 'builtin' ? t('agentCopy') : t('edit')}
+                            </button>
+                            {a.source !== 'builtin' && (
+                              <button
+                                onClick={() => void removeAgent(a)}
+                                className="text-muted hover:text-red-500"
+                              >
+                                {t('deleteChat')}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 <div>
                   <h3 className="mb-1 text-[13px] font-semibold text-fg">{t('skillsTitle')}</h3>
@@ -718,7 +920,7 @@ export function SettingsModal(): JSX.Element | null {
                                 {s.name}
                               </span>
                               <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-muted">
-                                {s.source}
+                                {srcLabel(s.source)}
                               </span>
                             </div>
                             {s.description && (

@@ -12,25 +12,13 @@ import {
   ListChecksIcon,
   MessageIcon,
   MicIcon,
-  SearchIcon,
-  PencilIcon,
-  SparklesIcon,
   GearIcon,
   ShieldIcon,
   ShieldOffIcon,
   SlidersIcon
 } from './icons'
 
-const STARTERS = ['starter1', 'starter2', 'starter3', 'starter4'] as const
-const STARTER_ICONS = [
-  <FolderIcon key="s1" />,
-  <SearchIcon key="s2" />,
-  <PencilIcon key="s3" />,
-  <SparklesIcon key="s4" />
-]
-
 function StarterPrompts(): JSX.Element {
-  const send = useStore((s) => s.send)
   const t = useT()
   const settings = useStore((s) => s.settings)
   const view = useStore((s) => s.view)
@@ -65,8 +53,9 @@ function StarterPrompts(): JSX.Element {
 
   return (
     <div className="text-center">
-      {/* Claude 式衬线问候语；设置了昵称则个性化 */}
-      <p className="font-display mb-6 text-3xl text-fg">
+      {/* Claude 式衬线问候语；设置了昵称则个性化。
+          下方无内容时不留尾边距——否则垂直居中的容器会把问候语顶偏 */}
+      <p className={`font-display text-3xl text-fg ${view !== 'chat' ? 'mb-6' : ''}`}>
         {settings?.profile?.name?.trim()
           ? t('greetHello').replace('{n}', settings.profile.name.trim())
           : t('starterHint')}
@@ -83,18 +72,6 @@ function StarterPrompts(): JSX.Element {
           </span>
         </div>
       )}
-      <div className="mx-auto grid max-w-xl grid-cols-1 gap-2 sm:grid-cols-2">
-        {STARTERS.map((key, i) => (
-          <button
-            key={key}
-            onClick={() => send(t(key))}
-            className="rounded-xl border border-line bg-surface px-4 py-3 text-left text-sm text-fg transition hover:border-accent hover:text-accent"
-          >
-            <span className="mr-2">{STARTER_ICONS[i]}</span>
-            {t(key)}
-          </button>
-        ))}
-      </div>
     </div>
   )
 }
@@ -154,27 +131,27 @@ function TokenMeter(): JSX.Element | null {
   const compact = useStore((s) => s.compact)
   const streaming = useStore((s) => s.streaming)
   const t = useT()
+  const settings = useStore((s) => s.settings)
   if (!active || active.messages.length === 0) return null
   const chars = active.messages.reduce((n, m) => n + (m.content?.length ?? 0), 0)
-  const tokens = Math.ceil(chars / 3) // 粗估：CJK 偏保守
-  const near = chars > 40_000 // 接近 48k 字符的历史预算
-  const label = tokens >= 1000 ? `~${(tokens / 1000).toFixed(1)}k` : `~${tokens}`
-  if (near) {
-    // 偏长时给出直接出口：点击即压缩（等价 /compact）
-    return (
-      <button
-        onClick={() => !streaming && void compact()}
-        title={t('tokenLongTip')}
-        className="rounded-md border border-line px-1.5 py-0.5 text-xs text-muted transition hover:bg-surface-2 hover:text-fg"
-      >
-        {label} tokens ⚠ {t('compressBtn')}
-      </button>
-    )
-  }
+  // 优先用端点返回的真实用量（prompt = 当前上下文实际占用）；没有则按字符粗估
+  const real = active.usage?.prompt
+  const tokens = real ?? Math.ceil(chars / 3)
+  const budget = settings?.contextChars ?? 120_000
+  const near = chars > budget * 0.8 // 接近历史预算时才提示压缩
+  // 平时不显示 token 计量：头部保持干净（Claude 头部只有标题与极少控件）；
+  // 只有接近上下文预算、需要用户采取行动时才出现，并直接给出「压缩」出口。
+  if (!near) return null
+  const fmt = (n: number): string => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n))
+  const label = real != null ? fmt(real) : `~${fmt(tokens)}` // 真实值不加 ~
   return (
-    <span title={t('tokenTip')} className="text-xs text-muted">
-      {label} tokens
-    </span>
+    <button
+      onClick={() => !streaming && void compact()}
+      title={t('tokenLongTip')}
+      className="rounded-md border border-line px-1.5 py-0.5 text-xs text-muted transition hover:bg-surface-2 hover:text-fg"
+    >
+      {label} tokens ⚠ {t('compressBtn')}
+    </button>
   )
 }
 
@@ -1306,7 +1283,7 @@ export function ChatView(): JSX.Element {
       >
         <div
           ref={contentRef}
-          className={`mx-auto flex w-full max-w-3xl flex-col gap-6 ${
+          className={`mx-auto flex w-full max-w-3xl flex-col gap-8 ${
             active.messages.length === 0 && !showStreaming ? 'h-full justify-center' : ''
           }`}
         >

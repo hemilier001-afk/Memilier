@@ -21,6 +21,13 @@ export interface PluginMeta {
   mcpServers: Record<string, McpServerConfig>
   /** 解析出的技能目录（若插件提供 skills 子目录） */
   skillDirs: string[]
+  /** 解析出的子 agent 目录（若插件提供 agents 子目录）——插件此前只能带 MCP+技能，
+   *  带不了角色定义，等于少了 Claude Code 插件的一大块组成 */
+  agentDirs: string[]
+  /** plugin.json 里的版本号（老插件没有 → undefined） */
+  version?: string
+  /** 提供的技能名（用于判断是否已被内置技能取代） */
+  skillNames: string[]
 }
 
 function pluginsDir(): string {
@@ -31,6 +38,17 @@ function pluginsDir(): string {
 
 function statePath(): string {
   return path.join(app.getPath('userData'), 'plugins-state.json')
+}
+
+/** 扫出某个技能目录下的技能名（目录名 或 顶层 .md 文件名） */
+function readSkillNames(skillDir: string): string[] {
+  try {
+    return readdirSync(skillDir, { withFileTypes: true })
+      .filter((e) => e.isDirectory() || e.name.endsWith('.md'))
+      .map((e) => (e.isDirectory() ? e.name : e.name.replace(/\.md$/, '')))
+  } catch {
+    return []
+  }
 }
 
 function readState(): Record<string, boolean> {
@@ -50,7 +68,8 @@ function writeState(state: Record<string, boolean>): void {
 
 /**
  * 扫描 plugins 目录。每个插件是一个子文件夹，内含 plugin.json：
- * { name, description?, mcpServers?: {...}, skills?: "技能子目录名（默认 skills）" }
+ * { name, description?, mcpServers?: {...}, skills?: "技能子目录名（默认 skills）",
+ *   agents?: "子 agent 子目录名（默认 agents）" }
  */
 function readPlugins(): PluginMeta[] {
   const base = pluginsDir()
@@ -72,6 +91,8 @@ function readPlugins(): PluginMeta[] {
       description?: string
       mcpServers?: Record<string, McpServerConfig>
       skills?: string
+      agents?: string
+      version?: string
     }
     try {
       manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
@@ -80,13 +101,18 @@ function readPlugins(): PluginMeta[] {
     }
     const name = manifest.name || e.name
     const skillDir = path.join(dir, manifest.skills || 'skills')
+    const agentDir = path.join(dir, manifest.agents || 'agents')
     out.push({
       name,
       description: manifest.description || '',
       dir,
       enabled: state[name] !== false,
       mcpServers: manifest.mcpServers || {},
-      skillDirs: existsSync(skillDir) ? [skillDir] : []
+      skillDirs: existsSync(skillDir) ? [skillDir] : [],
+      agentDirs: existsSync(agentDir) ? [agentDir] : [],
+      version: manifest.version,
+      // 该插件提供的技能名：用于判断内容是否已被内置技能取代（成了僵尸插件）
+      skillNames: existsSync(skillDir) ? readSkillNames(skillDir) : []
     })
   }
   return out
@@ -124,7 +150,12 @@ export const pluginManager = {
       writeFileSync(
         path.join(dir, 'plugin.json'),
         JSON.stringify(
-          { name: entry.name, description: entry.description, skills: 'skills' },
+          {
+            name: entry.name,
+            description: entry.description,
+            skills: 'skills',
+            version: entry.version
+          },
           null,
           2
         )

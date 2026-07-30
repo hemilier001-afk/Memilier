@@ -14,11 +14,20 @@ export interface ChatOptions {
   maxTokens?: number
 }
 
+/** 本次请求的真实 token 用量（来自 API 响应，比按字符估算准确） */
+export interface TokenUsage {
+  prompt: number
+  completion: number
+  total: number
+}
+
 export interface ChatResult {
   content: string
   toolCalls: ToolCall[]
   /** 完整推理链（若模型返回） */
   reasoning?: string
+  /** 端点返回的用量（部分端点不返回则为 undefined） */
+  usage?: TokenUsage
 }
 
 /**

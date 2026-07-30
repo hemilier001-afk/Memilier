@@ -161,8 +161,12 @@ export interface Conversation {
   projectId?: string
   /** 置顶（侧栏排序优先） */
   pinned?: boolean
-  /** 本会话已做过自动记忆沉淀（每会话只做一次） */
+  /** 本会话已做过自动记忆沉淀（兼容旧数据：true=已沉淀过一次） */
   distilled?: boolean
+  /** 上次自动沉淀时的对话轮数；长会话每再增 20 轮可再沉淀一次（避免后半程的有用信息永远漏掉） */
+  distilledTurns?: number
+  /** 最近一次请求的真实 token 用量（prompt=当前上下文占用，completion=本会话累计输出） */
+  usage?: { prompt: number; completion: number; total: number }
   /** 智能体维护的执行计划 */
   plan?: PlanStep[]
   messages: Message[]
@@ -179,6 +183,9 @@ export interface McpServerConfig {
   env?: Record<string, string>
   /** 远程传输：server 的 URL（与 command 二选一） */
   url?: string
+  /** 远程传输的自定义请求头（如 { "Authorization": "Bearer xxx" }）。
+   *  托管型 MCP 网关（WayStation、Smithery 等）几乎都要鉴权，没有这个字段就只能吃 401。 */
+  headers?: Record<string, string>
   /** 传输类型；默认 stdio。有 url 时未指定则按 http(streamable) 处理 */
   type?: 'stdio' | 'http' | 'sse'
   /** 默认启用；设为 false 可临时停用 */
@@ -240,6 +247,11 @@ export interface Settings {
   customPolicy?: CustomPolicy
   /** run_command 是否包 Seatbelt 沙箱（仅 macOS 生效；默认开；full 模式不沙箱） */
   sandboxCommands?: boolean
+  /** 发送给模型的历史预算（字符数）。默认 120k（≈4 万 token），现代模型多为 128k token 上下文。
+   *  超出时自动把较早历史压缩成摘要（而非静默丢弃），避免智能体"突然失忆"。 */
+  contextChars?: number
+  /** 超出预算时自动压缩（默认开）。关掉则退回旧行为：静默裁掉最早的消息。 */
+  autoCompact?: boolean
 }
 
 export interface ModelInfo {
@@ -309,14 +321,20 @@ export interface McpSearchResult {
 export interface AgentInfo {
   name: string
   description: string
-  source: 'builtin' | 'workspace' | 'global'
+  source: 'builtin' | 'workspace' | 'global' | 'plugin'
+  /** 工具白名单（逗号分隔展示用）；空=全部 */
+  tools?: string
+  /** 覆盖模型；空=沿用主对话模型 */
+  model?: string
+  /** system prompt 正文（编辑界面回填用） */
+  prompt?: string
 }
 
 /** 提供给设置界面展示的技能信息 */
 export interface SkillInfo {
   name: string
   description: string
-  source: 'global' | 'workspace' | 'plugin'
+  source: 'global' | 'workspace' | 'plugin' | 'builtin'
 }
 
 /** 提供给设置界面展示的插件信息 */
@@ -326,6 +344,14 @@ export interface PluginInfo {
   enabled: boolean
   mcpCount: number
   hasSkills: boolean
+  /** 已装版本（老插件无此字段） */
+  version?: string
+  /** 市场里的最新版本；> version 时界面显示「更新」 */
+  latestVersion?: string
+  /** 内容已被内置技能取代（装了也不生效，建议移除） */
+  superseded?: boolean
+  /** 对应的市场条目 id（供更新/移除操作） */
+  catalogId?: string
 }
 
 /** 插件市场条目 */
@@ -336,6 +362,7 @@ export interface PluginCatalogItem {
   category: string
   icon: string
   installed: boolean
+  version?: string
 }
 
 /** 传给模型的工具定义（JSON Schema 形式） */
@@ -467,9 +494,23 @@ export interface Api {
   onMemoryUpdated(cb: () => void): () => void
   readWorkspaceFile(workspaceDir: string, relPath: string): Promise<string>
   writeWorkspaceFile(workspaceDir: string, relPath: string, content: string): Promise<void>
+  /** 删除工作区内的文件（回滚「本轮新建的文件」时用） */
+  deleteWorkspaceFile(workspaceDir: string, relPath: string): Promise<void>
   listSkills(): Promise<SkillInfo[]>
   /** 列出可派生的子 agent 类型（内置 + 工作区 + 全局） */
   listAgents(workspaceDir: string): Promise<AgentInfo[]>
+  /** 新建/保存自定义子 agent */
+  saveAgent(
+    workspaceDir: string,
+    scope: 'workspace' | 'global',
+    def: { name: string; description: string; tools?: string; model?: string; prompt: string }
+  ): Promise<{ ok: boolean; error?: string }>
+  /** 删除自定义子 agent */
+  removeAgent(
+    workspaceDir: string,
+    scope: 'workspace' | 'global',
+    name: string
+  ): Promise<{ ok: boolean; error?: string }>
   /** 列出工作区自定义斜杠命令（.hemilier/commands/*.md） */
   listCommands(workspaceDir: string): Promise<{ name: string; description: string; body: string }[]>
   /** 全局搜索会话（标题 + 消息正文） */

@@ -241,15 +241,3 @@ a,
 summary {
   -webkit-app-region: no-drag;
 }
-
-/* 光标闪烁（流式输出占位） */
-.cursor-blink::after {
-  content: '▋';
-  animation: blink 1s step-start infinite;
-  margin-left: 1px;
-}
-@keyframes blink {
-  50% {
-    opacity: 0;
-  }
-}

@@ -6,8 +6,9 @@ import rehypeHighlight from 'rehype-highlight'
 import rehypeKatex from 'rehype-katex'
 import type { Message as Msg, ToolCall } from '@shared/types'
 import { useStore } from '../store'
+import { StatusDot } from './ui'
 import { useT } from '../i18n'
-import { GearIcon, WrenchIcon } from './icons'
+import { GearIcon } from './icons'
 
 // 图片可能是内联 data URL（乐观回显/旧数据）或文件引用（himg:），后者经 IPC 还原为 data URL
 function MessageImage({ source }: { source: string }): JSX.Element | null {
@@ -38,14 +39,6 @@ const STATUS_KEY = {
   error: 'stError',
   denied: 'stDenied'
 } as const
-
-const STATUS_COLOR: Record<ToolCall['status'], string> = {
-  pending: 'text-muted',
-  running: 'text-muted',
-  done: 'text-green-500',
-  error: 'text-red-500',
-  denied: 'text-muted'
-}
 
 function CopyButton({
   getText,
@@ -157,10 +150,17 @@ function ToolCallCard({ tc }: { tc: ToolCall }): JSX.Element | null {
       className="my-2 rounded-lg border border-line bg-surface-2 text-sm"
     >
       <summary className="flex cursor-pointer items-center gap-2 px-3 py-2">
-        <span className="flex items-center gap-1 font-mono text-xs text-accent">
-          <WrenchIcon className="h-3 w-3" /> {tc.name}
-        </span>
-        <span className={`text-xs ${STATUS_COLOR[tc.status]}`}>{t(STATUS_KEY[tc.status])}</span>
+        <StatusDot
+          tone={
+            tc.status === 'error' || tc.status === 'denied'
+              ? 'off'
+              : tc.status === 'done'
+                ? 'ok'
+                : 'warn'
+          }
+        />
+        <span className="font-mono text-xs text-muted">{tc.name}</span>
+        <span className="text-xs text-muted">{t(STATUS_KEY[tc.status])}</span>
       </summary>
       <div className="space-y-2 px-3 pb-3">
         <pre className="overflow-x-auto rounded bg-paper p-2 text-xs">
@@ -239,7 +239,7 @@ function MessageViewImpl({
             <p className="whitespace-pre-wrap break-words">{message.content}</p>
           </div>
         )}
-        <div className="mt-1 flex gap-3 px-1 opacity-0 transition group-hover:opacity-100">
+        <div className="mt-1 flex gap-3 px-1 opacity-40 transition group-hover:opacity-100">
           <button
             onClick={() => setPendingEdit({ id: message.id, content: message.content })}
             className="text-xs text-muted transition hover:text-fg"
@@ -260,14 +260,13 @@ function MessageViewImpl({
     <div className="group flex gap-3">
       <AssistantAvatar />
       <div className="min-w-0 flex-1">
-        <div className="mb-1 text-xs font-semibold text-muted">hemilier</div>
         {message.reasoning ? <ReasoningBlock text={message.reasoning} /> : null}
         {message.content && <Markdown text={message.content} />}
         {message.toolCalls?.map((tc) => (
           <ToolCallCard key={tc.id} tc={tc} />
         ))}
         {message.content && (
-          <div className="mt-1.5 flex gap-3 opacity-0 transition group-hover:opacity-100">
+          <div className="mt-1.5 flex gap-3 opacity-40 transition group-hover:opacity-100">
             <CopyButton
               getText={() => message.content}
               className="text-xs text-muted transition hover:text-fg"
@@ -338,13 +337,9 @@ export function StreamingBubble({
     <div className="flex gap-3">
       <AssistantAvatar active />
       <div className="min-w-0 flex-1">
-        <div className="mb-1 text-xs font-semibold text-muted">hemilier</div>
         {reasoning ? <ReasoningBlock text={reasoning} open={!text} /> : null}
         {shownText ? (
-          <div className="relative">
-            <Markdown text={shownText} />
-            <span className="cursor-blink text-accent" />
-          </div>
+          <Markdown text={shownText} />
         ) : reasoning ? null : (
           <span className="text-sm text-muted">{t('thinking')}</span>
         )}

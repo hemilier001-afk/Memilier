@@ -330,9 +330,15 @@ function PreviewView(): JSX.Element {
   const isHtml = ext === 'html' || ext === 'htm'
   // Office/PDF 是「提取的文本」而非源内容：只读预览，不给编辑（否则保存会把二进制毁成文本）
   const isOffice = ['docx', 'xlsx', 'pptx', 'pdf'].includes(ext)
+  // 二进制同样禁编辑：它们读进来就不是原文，保存会损坏原文件
+  const isBinary =
+    isOffice ||
+    /^(png|jpe?g|gif|webp|bmp|ico|zip|rar|7z|gz|tar|mp[34]|m4a|mov|avi|mkv|exe|dll|so|dylib|woff2?|ttf|otf|class|jar|wasm|db|sqlite3?|bin|dat|doc|xls|ppt)$/i.test(
+      ext
+    )
   const truncated = preview.content.includes('…（已截断）')
   const dirty = draft !== preview.content
-  const text = isMd || isOffice ? preview.content : `\`\`\`${ext}\n${preview.content}\n\`\`\``
+  const text = isMd || isBinary ? preview.content : `\`\`\`${ext}\n${preview.content}\n\`\`\``
 
   const save = async (): Promise<void> => {
     if (!active) return
@@ -368,7 +374,7 @@ function PreviewView(): JSX.Element {
               {mode === 'render' ? t('sourceBtn') : t('renderBtn')}
             </button>
           )}
-          {!isOffice && (
+          {!isBinary && (
             <button
               onClick={() =>
                 setMode(mode === 'edit' ? (isHtml && !truncated ? 'render' : 'view') : 'edit')
@@ -420,11 +426,50 @@ function DiffView(): JSX.Element {
     if (window.confirm(`${t('diffRevert')}：${path}?`))
       void window.api.writeWorkspaceFile(active.workspaceDir, path, before)
   }
+
+  // 整轮回滚（checkpoint 语义）：把每个被改过的文件还原到**本轮第一次改动之前**的样子。
+  // 注意取「最早」那条 diff 的 before —— 同一文件被改多次时，最后一条的 before 只是上一次的结果。
+  const revertAll = (): void => {
+    if (!active) return
+    const firstBefore = new Map<string, string>()
+    for (const d of diffs) if (!firstBefore.has(d.path)) firstBefore.set(d.path, d.before)
+    const paths = [...firstBefore.keys()]
+    const created = paths.filter((p) => firstBefore.get(p) === '') // 本轮新建的文件 → 删除
+    const list = paths.map((p) => (created.includes(p) ? `${p}（删除）` : p)).join('\n')
+    if (
+      !window.confirm(
+        `${t('diffRevertAllConfirm').replace('{n}', String(paths.length))}\n\n${list}`
+      )
+    )
+      return
+    void Promise.all(
+      paths.map((p) => {
+        const before = firstBefore.get(p) ?? ''
+        return before === ''
+          ? window.api.deleteWorkspaceFile(active.workspaceDir, p)
+          : window.api.writeWorkspaceFile(active.workspaceDir, p, before)
+      })
+    ).then(() => useStore.setState({ diffs: [] }))
+  }
+
   if (!diffs.length) {
     return <div className="p-4 text-sm text-muted">{t('diffEmpty')}</div>
   }
+  const touched = new Set(diffs.map((d) => d.path)).size
   return (
     <div className="space-y-3 p-2">
+      {/* 顶部：一键把本轮所有改动还原（对齐 Claude 的 checkpoint 回退） */}
+      <div className="flex items-center justify-between rounded-lg border border-line bg-surface px-2.5 py-1.5 text-xs">
+        <span className="text-muted">
+          {t('diffTouched').replace('{n}', String(touched)).replace('{c}', String(diffs.length))}
+        </span>
+        <button
+          onClick={revertAll}
+          className="rounded-md border border-line px-2 py-0.5 text-fg transition hover:bg-accent-soft"
+        >
+          ↩ {t('diffRevertAll')}
+        </button>
+      </div>
       {diffs
         .slice()
         .reverse()

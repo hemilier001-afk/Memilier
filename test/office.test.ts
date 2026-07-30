@@ -510,3 +510,180 @@ describe('PDF 页操作', () => {
     expect(() => pdfPageCount(fake)).toThrow(/加密/)
   })
 })
+
+describe('Markdown 表现力（实测踩过的坑）', () => {
+  it('docx：四~六级标题不再把 # 符号写进文档', () => {
+    const text = extractDocx(markdownToDocx('#### 四级\n##### 五级\n###### 六级'))
+    expect(text).toContain('四级')
+    expect(text).not.toContain('#') // 旧实现只支持到 H3，"#### 四级"原样输出
+    const xml = readZip(markdownToDocx('#### 四级')).get('word/styles.xml')!.toString()
+    expect(xml).toContain('Heading4') // 样式必须真实存在，否则 Word 里退化成正文
+  })
+
+  it('docx：嵌套列表按层级递增缩进（旧实现三级完全相同）', () => {
+    const xml = readZip(markdownToDocx('- 一级\n  - 二级\n    - 三级'))
+      .get('word/document.xml')!
+      .toString()
+    const lefts = [...xml.matchAll(/w:left="(\d+)"/g)].map((m) => Number(m[1]))
+    expect(lefts[0]).toBeLessThan(lefts[1])
+    expect(lefts[1]).toBeLessThan(lefts[2])
+  })
+
+  it('docx：删除线与分页符', () => {
+    expect(readZip(markdownToDocx('~~作废~~')).get('word/document.xml')!.toString()).toContain(
+      '<w:strike/>'
+    )
+    expect(
+      readZip(markdownToDocx('甲\n\n<!-- pagebreak -->\n\n乙')).get('word/document.xml')!.toString()
+    ).toContain('w:br w:type="page"')
+  })
+
+  it('PDF：嵌套列表生成真正的嵌套 ul，标题支持到 h6', () => {
+    const html = mdToHtml('- 一级\n  - 二级').replace(/\n/g, '')
+    expect(html).toBe('<ul><li>一级</li><ul><li>二级</li></ul></ul>')
+    expect(mdToHtml('##### 五级')).toBe('<h5>五级</h5>')
+    expect(mdToHtml('~~删除~~')).toContain('<del>删除</del>')
+  })
+
+  it('pptx：要点里的 **粗体** 变成真正的加粗，而不是字面显示', () => {
+    const buf = slidesToPptx([{ title: '标题**重点**', bullets: ['要点**粗**'] }])
+    expect(readZip(buf).get('ppt/slides/slide1.xml')!.toString()).toContain('b="1"')
+    expect(extractPptx(buf)).not.toContain('**') // 旧实现幻灯片上会出现字面的 **
+  })
+})
+
+describe('中文排版与表格可读性', () => {
+  it('docx：正文段落首行缩进 2 字符，标题/列表不缩进', () => {
+    const xml = readZip(markdownToDocx('正文一段。\n\n# 标题\n\n- 列表'))
+      .get('word/document.xml')!
+      .toString()
+    // 只有正文那一段带首行缩进
+    expect([...xml.matchAll(/firstLineChars="200"/g)]).toHaveLength(1)
+  })
+
+  it('docx：正文默认小四（24 半磅）+ 中文宋体', () => {
+    const st = readZip(markdownToDocx('x')).get('word/styles.xml')!.toString()
+    expect(st).toContain('w:sz w:val="24"')
+    expect(st).toContain('w:eastAsia="宋体"')
+  })
+
+  it('xlsx：按内容自动列宽（中文按双宽算），并冻结表头行', () => {
+    const buf = rowsToXlsx([
+      {
+        name: 'S',
+        rows: [
+          ['姓名', '申请执行标的金额'],
+          ['张三', 1234567.89]
+        ]
+      }
+    ])
+    const xml = readZip(buf).get('xl/worksheets/sheet1.xml')!.toString()
+    const widths = [...xml.matchAll(/width="([\d.]+)"/g)].map((m) => Number(m[1]))
+    expect(widths).toHaveLength(2)
+    expect(widths[1]).toBeGreaterThan(widths[0]) // 8 个汉字的列明显更宽
+    expect(xml).toContain('state="frozen"') // 大表滚动时表头不跑
+  })
+
+  it('xlsx：列宽有上下限，超长内容不会把表撑爆', () => {
+    const buf = rowsToXlsx([{ name: 'S', rows: [['x'.repeat(500)], ['a']] }])
+    const xml = readZip(buf).get('xl/worksheets/sheet1.xml')!.toString()
+    const w = Number(/width="([\d.]+)"/.exec(xml)![1])
+    expect(w).toBeLessThanOrEqual(60)
+    expect(w).toBeGreaterThanOrEqual(8)
+  })
+})
+
+describe('xlsx 读取保真（实测踩过的坑）', () => {
+  /** 构造一个带样式的最小 xlsx：A1 为日期格式(numFmtId=14)，B1 为普通数字 */
+  function makeSheet(cells: string, styles: string): Buffer {
+    return writeZip([
+      {
+        name: '[Content_Types].xml',
+        data: '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/></Types>'
+      },
+      {
+        name: 'xl/workbook.xml',
+        data: '<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheets><sheet name="S" sheetId="1"/></sheets></workbook>'
+      },
+      { name: 'xl/styles.xml', data: styles },
+      {
+        name: 'xl/worksheets/sheet1.xml',
+        data: `<?xml version="1.0"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1">${cells}</row></sheetData></worksheet>`
+      }
+    ])
+  }
+  const STYLES_DATE =
+    '<?xml version="1.0"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><cellXfs count="2"><xf numFmtId="0"/><xf numFmtId="14"/></cellXfs></styleSheet>'
+
+  it('日期序列号还原成可读日期（否则"出生日期"会读成 34908）', () => {
+    // 34908 = 1995-07-28；s="1" 指向 numFmtId=14 的日期格式
+    const buf = makeSheet(
+      '<c r="A1" s="1"><v>34908</v></c><c r="B1" s="0"><v>34908</v></c>',
+      STYLES_DATE
+    )
+    const text = extractXlsx(buf)
+    expect(text).toContain('1995-07-28') // 日期格式的列
+    expect(text).toContain('34908') // 非日期格式的列保持原样，不误转
+  })
+
+  it('自定义 yyyy-mm-dd 格式同样识别', () => {
+    const styles =
+      '<?xml version="1.0"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><numFmts><numFmt numFmtId="176" formatCode="yyyy-mm-dd"/></numFmts><cellXfs count="1"><xf numFmtId="176"/></cellXfs></styleSheet>'
+    expect(extractXlsx(makeSheet('<c r="A1" s="0"><v>45000</v></c>', styles))).toMatch(
+      /\d{4}-\d{2}-\d{2}/
+    )
+  })
+
+  it('单元格内换行被压平，不再打散 TSV 行列对齐', () => {
+    const buf = rowsToXlsx([
+      {
+        name: 'S',
+        rows: [
+          ['剩余本金\n（元）', '备注'],
+          ['100', 'x']
+        ]
+      }
+    ])
+    const lines = extractXlsx(buf).split('\n')
+    // 表头必须是完整一行两列，而不是被换行拆成多行
+    expect(lines[1]).toBe('剩余本金 （元）\t备注')
+    expect(lines[2]).toBe('100\tx')
+  })
+})
+
+describe('Word 页眉页脚 / PPT 演讲者备注（此前完全丢失）', () => {
+  it('docx：页眉页脚可生成，且能被读回', () => {
+    const buf = markdownToDocx('正文', undefined, {
+      header: '湖北立丰律师事务所',
+      footer: '第 {page} 页 共 {pages} 页'
+    })
+    const text = extractDocx(buf)
+    expect(text).toContain('【页眉】湖北立丰律师事务所')
+    expect(text).toContain('【页脚】第 1 页 共 1 页') // 域代码 PAGE/NUMPAGES 不该出现在正文
+    expect(text).not.toContain('NUMPAGES')
+    // {page} 必须落成真正的页码域，而不是死字
+    expect(readZip(buf).get('word/footer1.xml')!.toString()).toContain('PAGE')
+  })
+
+  it('docx：不传页眉页脚时不生成多余部件', () => {
+    const files = readZip(markdownToDocx('正文'))
+    expect(files.has('word/header1.xml')).toBe(false)
+    expect(files.has('word/footer1.xml')).toBe(false)
+  })
+
+  it('pptx：演讲者备注可生成，且能被读回', () => {
+    const buf = slidesToPptx([
+      { title: '风险提示', bullets: ['条款一'], notes: '这里要强调违约责任' }
+    ])
+    expect(extractPptx(buf)).toContain('【备注】这里要强调违约责任')
+    const files = readZip(buf)
+    expect(files.has('ppt/notesSlides/notesSlide1.xml')).toBe(true)
+    expect(files.has('ppt/notesMasters/notesMaster1.xml')).toBe(true) // 备注母版是必需件
+  })
+
+  it('pptx：没有备注的幻灯片不生成备注部件', () => {
+    const files = readZip(slidesToPptx([{ title: 'T', bullets: ['a'] }]))
+    expect(files.has('ppt/notesSlides/notesSlide1.xml')).toBe(false)
+    expect(files.has('ppt/notesMasters/notesMaster1.xml')).toBe(false)
+  })
+})

@@ -109,3 +109,34 @@ describe('mapRegistryResponse（真实 registry 结构）', () => {
     expect(mapRegistryResponse({ servers: 'bad' }, 'x')).toEqual([])
   })
 })
+
+describe('mcpSignature（信任门签名）', () => {
+  it('不带 headers 时签名与旧版一致——老用户的授信不会集体失效', async () => {
+    const { mcpSignature } = await import('../src/main/mcp/manager')
+    const cfg = { command: 'npx', args: ['-y', 'x'] }
+    const legacy = `srv::${JSON.stringify([cfg.command, cfg.args, {}, undefined, undefined])}`
+    expect(mcpSignature('srv', cfg)).toBe(legacy)
+  })
+
+  it('空 headers 对象也不改变签名', async () => {
+    const { mcpSignature } = await import('../src/main/mcp/manager')
+    expect(mcpSignature('s', { url: 'https://a/mcp', type: 'http', headers: {} })).toBe(
+      mcpSignature('s', { url: 'https://a/mcp', type: 'http' })
+    )
+  })
+
+  it('有 headers 时纳入签名：换了鉴权头即视为配置变更，需重新信任', async () => {
+    const { mcpSignature } = await import('../src/main/mcp/manager')
+    const a = mcpSignature('s', {
+      url: 'https://a/mcp',
+      type: 'http',
+      headers: { Authorization: 'Bearer 1' }
+    })
+    const b = mcpSignature('s', {
+      url: 'https://a/mcp',
+      type: 'http',
+      headers: { Authorization: 'Bearer 2' }
+    })
+    expect(a).not.toBe(b)
+  })
+})

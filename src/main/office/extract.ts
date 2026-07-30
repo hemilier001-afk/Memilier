@@ -48,9 +48,36 @@ export function extractDocx(buf: Buffer): string {
     .replace(/<w:br[^>]*\/>/g, '\n')
     .replace(/<\/w:p>/g, '\n')
     .replace(/<[^>]+>/g, '')
-  return xmlUnesc(text)
+  const body = xmlUnesc(text)
     .replace(/\n{3,}/g, '\n\n')
     .trim()
+
+  // 页眉/页脚此前完全没读（实测丢失）：法律文书的事务所抬头、页码、落款常放在这里
+  const partText = (re: RegExp): string[] => {
+    const seen = new Set<string>()
+    for (const k of files.keys()) {
+      if (!re.test(k)) continue
+      const raw = files.get(k)!.toString('utf8')
+      const t = xmlUnesc(
+        raw
+          .replace(/<w:instrText[^>]*>[\s\S]*?<\/w:instrText>/g, '') // 域代码(PAGE/NUMPAGES)不是显示文本
+          .replace(/<w:tab[^>]*\/>/g, ' ')
+          .replace(/<\/w:p>/g, '\n')
+          .replace(/<[^>]+>/g, '')
+      )
+        .replace(/[ \t]+/g, ' ')
+        .trim()
+      // 只有页码域的页眉会解析出空串；同内容的多份页眉（首页/奇偶页）去重
+      if (t) seen.add(t)
+    }
+    return [...seen]
+  }
+  const headers = partText(/^word\/header\d*\.xml$/)
+  const footers = partText(/^word\/footer\d*\.xml$/)
+  const extra: string[] = []
+  if (headers.length) extra.push(`【页眉】${headers.join(' / ')}`)
+  if (footers.length) extra.push(`【页脚】${footers.join(' / ')}`)
+  return extra.length ? `${extra.join('\n')}\n\n${body}` : body
 }
 
 /** docx 批注 + 修订（增删痕迹）提取：法律/协作审阅用。无则返回空串。 */
@@ -99,6 +126,66 @@ export function extractDocxRevisions(buf: Buffer): string {
 }
 
 // ---------- Excel ----------
+// Excel 把日期存成"序列号"（1899-12-30 起的天数），单元格靠样式的 numFmt 显示成日期。
+// 不还原的话，"出生日期"读出来就是 34908 这种数字——模型据此分析必然出错（实测踩过）。
+const BUILTIN_DATE_FMT = new Set([14, 15, 16, 17, 18, 19, 20, 21, 22, 45, 46, 47])
+
+/** 解析 styles.xml：返回「样式索引 → 是否日期格式」以及是否含时间部分 */
+function dateStyles(stylesXml: string): Map<number, 'date' | 'datetime' | 'time'> {
+  const out = new Map<number, 'date' | 'datetime' | 'time'>()
+  if (!stylesXml) return out
+  // 自定义格式：numFmtId → formatCode
+  const custom = new Map<number, string>()
+  for (const m of stylesXml.matchAll(/<numFmt[^>]*numFmtId="(\d+)"[^>]*formatCode="([^"]*)"/g)) {
+    custom.set(Number(m[1]), xmlUnesc(m[2]))
+  }
+  const xfsBlock = /<cellXfs[^>]*>([\s\S]*?)<\/cellXfs>/.exec(stylesXml)?.[1] ?? ''
+  let i = 0
+  for (const xf of xfsBlock.matchAll(/<xf[^>]*>/g)) {
+    const id = Number(/numFmtId="(\d+)"/.exec(xf[0])?.[1] ?? 0)
+    let kind: 'date' | 'datetime' | 'time' | null = null
+    if (BUILTIN_DATE_FMT.has(id)) {
+      kind =
+        id >= 18 && id <= 21
+          ? 'time'
+          : id === 22 || id === 45 || id === 46 || id === 47
+            ? 'datetime'
+            : 'date'
+    } else {
+      const code = custom.get(id)
+      if (code) {
+        // 去掉引号内的字面量与颜色/条件段后再判断，避免把 "y" 这种文字误判成日期
+        const bare = code.replace(/"[^"]*"/g, '').replace(/\[[^\]]*\]/g, '')
+        const hasDate = /[yYmMdD]/.test(bare) && !/^[^ymdYMD]*$/.test(bare)
+        const hasTime = /[hHsS]/.test(bare)
+        if (hasDate) kind = hasTime ? 'datetime' : 'date'
+        else if (hasTime) kind = 'time'
+      }
+    }
+    if (kind) out.set(i, kind)
+    i++
+  }
+  return out
+}
+
+/** Excel 序列号 → 可读日期。基准 1899-12-30 已内含 1900 闰年 bug 的补偿 */
+function serialToDate(serial: number, kind: 'date' | 'datetime' | 'time'): string {
+  if (!Number.isFinite(serial) || serial <= 0) return String(serial)
+  const ms = Math.round((serial - 25569) * 86400 * 1000) // 25569 = 1970-01-01 的序列号
+  const d = new Date(ms)
+  if (Number.isNaN(d.getTime())) return String(serial)
+  const p = (n: number): string => String(n).padStart(2, '0')
+  const date = `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}`
+  const time = `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`
+  if (kind === 'time') return time
+  return kind === 'datetime' ? `${date} ${time}` : date
+}
+
+/** 单元格内的换行会把 TSV 打散、整张表列错位（实测：表头"剩余本金\r（元）"断成三行） */
+function flattenCell(v: string): string {
+  return v.replace(/\r\n|[\r\n]/g, ' ').replace(/\t/g, ' ')
+}
+
 export function extractXlsx(buf: Buffer): string {
   assertSize(buf)
   const files = readZip(buf)
@@ -111,6 +198,7 @@ export function extractXlsx(buf: Buffer): string {
       shared.push(ts.join(''))
     }
   }
+  const dateFmt = dateStyles(files.get('xl/styles.xml')?.toString('utf8') ?? '')
   // 工作表名（workbook.xml 里的顺序即 sheet1..N 的顺序）
   const wb = files.get('xl/workbook.xml')?.toString('utf8') ?? ''
   const names = [...wb.matchAll(/<sheet[^>]*name="([^"]*)"/g)].map((m) => xmlUnesc(m[1]))
@@ -145,11 +233,17 @@ export function extractXlsx(buf: Buffer): string {
         } else {
           const v = /<v>([\s\S]*?)<\/v>/.exec(body)?.[1]
           val = v ? xmlUnesc(v) : ''
+          // 数值 + 日期样式 → 还原成人类可读的日期（否则是 34908 这种序列号）
+          const sIdx = Number(/s="(\d+)"/.exec(attrs)?.[1] ?? -1)
+          const kind = sIdx >= 0 ? dateFmt.get(sIdx) : undefined
+          if (kind && val !== '' && !Number.isNaN(Number(val))) {
+            val = serialToDate(Number(val), kind)
+          }
         }
         const ref = /r="([A-Z]+)\d+"/.exec(attrs)?.[1]
         const idx = ref ? colIndex(ref) : cells.length
         while (cells.length < idx) cells.push('')
-        cells[idx] = val
+        cells[idx] = flattenCell(val)
       }
       if (cells.some((c) => c !== '')) out.push(cells.join('\t'))
     }
@@ -174,6 +268,20 @@ export function extractPptx(buf: Buffer): string {
       const ts = [...p.matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)].map((m) => xmlUnesc(m[1]))
       const line = ts.join('').trim()
       if (line) out.push(line)
+    }
+    // 演讲者备注（notesSlideN.xml）此前完全没读：讲稿/要点说明常写在这里
+    const notes = files.get(`ppt/notesSlides/notesSlide${i + 1}.xml`)?.toString('utf8')
+    if (notes) {
+      const lines: string[] = []
+      for (const p of notes.match(/<a:p>[\s\S]*?<\/a:p>/g) ?? []) {
+        const t = [...p.matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)]
+          .map((m) => xmlUnesc(m[1]))
+          .join('')
+          .trim()
+        // 备注页里通常混着一个纯数字的页码占位符，过滤掉
+        if (t && !/^\d+$/.test(t)) lines.push(t)
+      }
+      if (lines.length) out.push(`【备注】${lines.join(' ')}`)
     }
   })
   return out.join('\n').trim()

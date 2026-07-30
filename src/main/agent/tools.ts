@@ -7,7 +7,9 @@ import { z } from 'zod'
 import type { PlanStep, ToolDef } from '@shared/types'
 import { isDangerousCommand, isPrivateIp } from './safety'
 import { buildSeatbeltProfile, sandboxAvailable, sandboxWritePaths } from './sandbox'
-import { extractAny } from '../office/extract'
+import { extractAny, extractDocx, extractPptx, extractXlsx } from '../office/extract'
+import { extractPdfText } from '../office/pdfread'
+import { contentKind, getCachedPage, robotsAllows, setCachedPage } from '../web'
 import { markdownToDocx } from '../office/docx'
 import { rowsToXlsx, type CellValue, type SheetChart } from '../office/xlsx'
 import { slidesToPptx, type SlideInput } from '../office/pptx'
@@ -64,6 +66,48 @@ const SKIP_DIRS = new Set(['node_modules', '.git', 'out', 'dist', '.next', 'buil
 
 function truncate(s: string, max: number): string {
   return s.length > max ? `${s.slice(0, max)}\n…（已截断，共 ${s.length} 字符）` : s
+}
+
+// 不能按文本读写的文件：读出来是乱码、写回去会**损坏文件**。
+// docx/xlsx/pptx/pdf/csv 归为"文档"，指路 read_document；其余归为纯二进制。
+const DOC_EXT = /\.(docx|xlsx|pptx|pdf|csv|tsv)$/i
+const LEGACY_OFFICE_EXT = /\.(doc|xls|ppt)$/i
+const BINARY_EXT =
+  /\.(png|jpe?g|gif|webp|bmp|ico|svgz|zip|rar|7z|gz|bz2|tar|mp[34]|m4a|mov|avi|mkv|exe|dll|so|dylib|woff2?|ttf|otf|eot|class|jar|wasm|db|sqlite3?|bin|dat|pyc|o|a)$/i
+
+/** 内容级兜底：前 4KB 出现 NUL 字节基本可断定是二进制（文本文件不会有） */
+function looksBinary(buf: Buffer): boolean {
+  return buf.subarray(0, 4096).includes(0)
+}
+
+/** 按文本处理前的统一守卫：目录/文档/二进制都给出明确指路，而不是回吐乱码或 Node 原始错误 */
+async function assertTextFile(abs: string, rel: string): Promise<Buffer> {
+  const st = await fs.stat(abs).catch(() => null)
+  if (st?.isDirectory()) {
+    throw new Error(
+      `「${rel}」是一个目录，不是文件。请用 list_dir 查看目录内容，或指定其中的具体文件。`
+    )
+  }
+  if (DOC_EXT.test(rel)) {
+    throw new Error(
+      `「${rel}」是文档格式，按文本读写会是乱码且可能损坏文件。请改用 read_document 读取内容。`
+    )
+  }
+  if (LEGACY_OFFICE_EXT.test(rel)) {
+    throw new Error(
+      `「${rel}」是旧版二进制 Office 格式，无法按文本处理。请让用户先另存为 .docx/.xlsx/.pptx。`
+    )
+  }
+  if (BINARY_EXT.test(rel)) {
+    throw new Error(`「${rel}」是二进制文件（非文本），无法按文本读写。`)
+  }
+  const buf = await fs.readFile(abs)
+  if (looksBinary(buf)) {
+    throw new Error(
+      `「${rel}」看起来是二进制文件（含空字节），不是文本。若是文档请用 read_document。`
+    )
+  }
+  return buf
 }
 
 // 网页 → Markdown（借鉴 Claude 的浏览体验）：优先取正文容器、剥掉导航/页脚等样板，
@@ -138,8 +182,8 @@ const readFile: Tool = {
   },
   async execute({ path: p }, ctx) {
     const abs = resolveInWorkspace(ctx.workspace, p)
-    const content = await fs.readFile(abs, 'utf8')
-    return truncate(content, MAX_FILE_CHARS)
+    const buf = await assertTextFile(abs, p)
+    return truncate(buf.toString('utf8'), MAX_FILE_CHARS)
   }
 }
 
@@ -189,7 +233,8 @@ const editFile: Tool = {
   },
   async execute({ path: p, old_string, new_string, replace_all }, ctx) {
     const abs = resolveInWorkspace(ctx.workspace, p)
-    const content = await fs.readFile(abs, 'utf8')
+    // 关键：二进制按 utf8 读成乱码后再写回，会**真的损坏文件**——必须先拦住
+    const content = (await assertTextFile(abs, p)).toString('utf8')
     const occurrences = content.split(old_string).length - 1
     if (occurrences === 0) throw new Error('未找到要替换的 old_string')
     if (occurrences > 1 && !replace_all)
@@ -201,7 +246,24 @@ const editFile: Tool = {
       : content.replace(old_string, new_string)
     await fs.writeFile(abs, after, 'utf8')
     ctx.recordDiff?.(p, content, after)
-    return replace_all ? `已编辑 ${p}（替换 ${occurrences} 处）` : `已编辑 ${p}`
+    // 回显改动周边的几行：此前只回"已编辑"，模型无从确认改到了正确的位置。
+    // 给出带行号的上下文，改错位置能立刻发现（也让工具卡片里一眼看清改了什么）。
+    const idx = after.indexOf(new_string)
+    let preview = ''
+    if (idx >= 0) {
+      const lines = after.split('\n')
+      const hitLine = after.slice(0, idx).split('\n').length - 1
+      const from = Math.max(0, hitLine - 2)
+      const to = Math.min(lines.length, hitLine + new_string.split('\n').length + 2)
+      preview =
+        '\n改动位置：\n' +
+        lines
+          .slice(from, to)
+          .map((l, i) => `${String(from + i + 1).padStart(4)} | ${l}`)
+          .join('\n')
+    }
+    const headline = replace_all ? `已编辑 ${p}（替换 ${occurrences} 处）` : `已编辑 ${p}`
+    return truncate(headline + preview, 4000)
   }
 }
 
@@ -313,7 +375,11 @@ const grep: Tool = {
         try {
           const stat = await fs.stat(full)
           if (stat.size > 1_000_000) continue
-          const lines = (await fs.readFile(full, 'utf8')).split('\n')
+          if (DOC_EXT.test(e.name) || LEGACY_OFFICE_EXT.test(e.name) || BINARY_EXT.test(e.name))
+            continue // 二进制/文档：按文本搜只会命中乱码
+          const raw = await fs.readFile(full)
+          if (looksBinary(raw)) continue
+          const lines = raw.toString('utf8').split('\n')
           lines.forEach((line, i) => {
             if (re.test(line) && results.length < MAX_GREP_RESULTS) {
               results.push(
@@ -432,36 +498,71 @@ const fetchUrl: Tool = {
     required: ['url']
   },
   async execute({ url }) {
+    // 同一 URL 短时间内重复抓取直接命中缓存（多步任务里常反复读同一页）
+    const cached = getCachedPage(url)
+    if (cached) return cached
+
+    // 遵守站点 robots.txt（取不到则放行，业界惯例 fail-open）
+    if (!(await robotsAllows(url, (u) => safeFetch(u)))) {
+      throw new Error(
+        '该站点的 robots.txt 不允许抓取此路径；请改用其它来源，或请用户自行提供内容。'
+      )
+    }
+
     const res = await safeFetch(url)
     if (!res.ok) throw new Error(`请求失败 (${res.status})`)
     const ct = res.headers.get('content-type') ?? ''
-    // 流式读取并设 2MB 硬上限：防止超大/无限响应把主进程内存撑爆
-    const MAX_BODY = 2 * 1024 * 1024
-    let raw = ''
+    const kind = contentKind(ct, url)
+    const MAX_BODY = 2 * 1024 * 1024 // 硬上限：防止超大/无限响应把主进程内存撑爆
+
+    // 二进制类（图片/音视频/压缩包等）：绝不能把字节当文本灌进上下文
+    if (kind === 'binary') {
+      return `（该 URL 是二进制内容（${ct || '未知类型'}），不是可读文本。若是文档，请让用户下载到工作区后用 read_document 读取。）`
+    }
+
+    // 按字节读取：PDF 必须拿原始字节，文本类之后再解码
+    let buf: Buffer
+    let truncatedBody = false
     if (res.body) {
       const reader = res.body.getReader()
-      const decoder = new TextDecoder()
+      const chunks: Buffer[] = []
       let bytes = 0
       for (;;) {
         const { done, value } = await reader.read()
         if (done) break
+        chunks.push(Buffer.from(value))
         bytes += value.byteLength
-        raw += decoder.decode(value, { stream: true })
         if (bytes >= MAX_BODY) {
           void reader.cancel().catch(() => {})
-          raw += '\n…（响应过大，已截断到 2MB）'
+          truncatedBody = true
           break
         }
       }
+      buf = Buffer.concat(chunks)
     } else {
-      raw = await res.text()
+      buf = Buffer.from(await res.text(), 'utf8')
     }
-    if (/html/i.test(ct)) {
+
+    let out: string
+    if (kind === 'pdf') {
+      // 复用内置 PDF 解析器（中文 CID 可还原）；失败时如实说明，而不是回吐乱码
+      try {
+        const text = extractPdfText(buf)
+        out = UNTRUSTED_WEB + `URL：${url}\n\n` + truncate(text, MAX_OUTPUT_CHARS)
+      } catch (e) {
+        return `（该 URL 是 PDF，但解析失败：${e instanceof Error ? e.message : String(e)}）`
+      }
+    } else if (kind === 'html') {
+      const raw = buf.toString('utf8') + (truncatedBody ? '\n…（响应过大，已截断到 2MB）' : '')
       const { title, body } = htmlToMarkdown(raw, url)
       const head = title ? `标题：${title}\nURL：${url}\n\n` : `URL：${url}\n\n`
-      return UNTRUSTED_WEB + truncate(head + (body || '(无正文内容)'), MAX_OUTPUT_CHARS)
+      out = UNTRUSTED_WEB + truncate(head + (body || '(无正文内容)'), MAX_OUTPUT_CHARS)
+    } else {
+      const raw = buf.toString('utf8') + (truncatedBody ? '\n…（响应过大，已截断到 2MB）' : '')
+      out = UNTRUSTED_WEB + truncate(raw || '(无内容)', MAX_OUTPUT_CHARS)
     }
-    return UNTRUSTED_WEB + truncate(raw || '(无内容)', MAX_OUTPUT_CHARS)
+    setCachedPage(url, out)
+    return out
   }
 }
 
@@ -531,7 +632,16 @@ const webSearch: Tool = {
       out.push(`${out.length + 1}. ${title}\n   ${href}${snippet ? `\n   ${snippet}` : ''}`)
       i++
     }
-    return out.length ? UNTRUSTED_WEB + out.join('\n\n') : '未找到结果（换个关键词或稍后再试）。'
+    if (out.length) return UNTRUSTED_WEB + out.join('\n\n')
+    // 区分「确实没有结果」与「页面结构变了/被拦截导致解析不出来」——
+    // 后者若也回「未找到结果」，会让模型以为该话题无资料，静默走偏。
+    const looksLikeResultPage = /result__|results--main|no results|没有找到/i.test(html)
+    if (!looksLikeResultPage) {
+      throw new Error(
+        `搜索结果解析失败（返回了 ${html.length} 字符但不含预期结构，可能是被拦截或页面改版）。请改用 fetch_url 直接读取已知网址，或让用户提供资料。`
+      )
+    }
+    return '未找到结果（换个关键词或稍后再试）。'
   }
 }
 
@@ -802,6 +912,47 @@ const recall: Tool = {
 
 // 多 agent 编排：派生一个专注的子 agent 完成子任务。子 agent 有独立上下文、自己的工具白名单
 // 与（可选）模型，做完把最终报告返回。编排本身无副作用（子 agent 的写/执行工具仍各自经授权）。
+// ——— 生成后回读校验 ———
+// 生成类工具此前只回"写了多少字节"，证明不了文件是否真的可读、内容有没有丢。
+// 这里用自家解析器把刚写的文件读回来，把**真相**写进返回值；读不出内容就直接报错，
+// 而不是让模型以为成功了。相比"叮嘱模型再调一次 read_document"，这是系统级保证。
+function summarize(text: string): { chars: number; lines: number; head: string } {
+  const t = text.trim()
+  const lines = t ? t.split(/\n+/).filter((x) => x.trim()).length : 0
+  return { chars: t.length, lines, head: t.slice(0, 40).replace(/\s+/g, ' ') }
+}
+
+/** 回读刚生成的文件并给出可核对的摘要；expectText=源内容里确实有文字时，读不出就判定失败 */
+async function verifyGenerated(
+  abs: string,
+  kind: 'docx' | 'xlsx' | 'pptx' | 'pdf',
+  expectText: boolean
+): Promise<string> {
+  let text: string
+  try {
+    const buf = await fs.readFile(abs)
+    text =
+      kind === 'docx'
+        ? extractDocx(buf)
+        : kind === 'xlsx'
+          ? extractXlsx(buf)
+          : kind === 'pptx'
+            ? extractPptx(buf)
+            : extractPdfText(buf) // PDF 走同步解析，不触发 OCR（刚生成的文件没必要）
+  } catch (e) {
+    throw new Error(
+      `文件已写出但**回读校验失败**（可能已损坏）：${e instanceof Error ? e.message : String(e)}`
+    )
+  }
+  const { chars, lines } = summarize(text)
+  if (expectText && chars < 2) {
+    throw new Error(
+      '文件已写出但**回读为空**——内容没有真正进入文件（生成逻辑或输入有问题），请检查后重试，不要当作已完成。'
+    )
+  }
+  return `回读校验：约 ${chars} 字、${lines} 行`
+}
+
 // ---------------- Office 办公（对齐 Claude 的 docx/xlsx/pptx/pdf 技能：原生读写，零外部依赖） ----------------
 
 /** 从工作区读入若干图片文件 → path→字节 Map（跳过不存在/读失败的，图片格式合法性由生成器判定） */
@@ -849,7 +1000,12 @@ const writeDocx: Tool = {
   description:
     '把 Markdown 内容生成为 Word 文档（.docx）。支持 #/##/### 标题、**粗体**/*斜体*/`等宽`、- 与 1. 列表、| 表格 |、``` 代码块、> 引用、以及 ![说明](图片路径) 内嵌图片（PNG/JPEG/GIF，路径相对工作区）。适合报告/纪要/合同等交付物。',
   sideEffect: 'write',
-  schema: z.object({ path: z.string(), markdown: z.string() }),
+  schema: z.object({
+    path: z.string(),
+    markdown: z.string(),
+    header: z.string().optional(),
+    footer: z.string().optional()
+  }),
   parameters: {
     type: 'object',
     properties: {
@@ -857,19 +1013,26 @@ const writeDocx: Tool = {
       markdown: {
         type: 'string',
         description: '文档内容（Markdown 格式）。用 ![说明](相对路径.png) 内嵌工作区里的图片'
+      },
+      header: { type: 'string', description: '页眉文字（可选），如事务所抬头/文号' },
+      footer: {
+        type: 'string',
+        description:
+          '页脚文字（可选）。用 {page} 插入当前页码、{pages} 插入总页数，如「第 {page} 页 共 {pages} 页」'
       }
     },
     required: ['path', 'markdown']
   },
-  async execute({ path: p, markdown }, ctx) {
+  async execute({ path: p, markdown, header, footer }, ctx) {
     const rel = p.toLowerCase().endsWith('.docx') ? p : `${p}.docx`
     const abs = resolveInWorkspace(ctx.workspace, rel)
     await fs.mkdir(path.dirname(abs), { recursive: true })
     const imgPaths = [...markdown.matchAll(/!\[[^\]]*\]\(([^)]+)\)/g)].map((m) => m[1].trim())
     const images = imgPaths.length ? await collectImages(ctx.workspace, imgPaths) : undefined
-    const buf = markdownToDocx(markdown, images)
+    const buf = markdownToDocx(markdown, images, { header, footer })
     await fs.writeFile(abs, buf)
-    return `已生成 Word 文档 ${rel}（${(buf.length / 1024).toFixed(1)} KB${images?.size ? `，含 ${images.size} 张图片` : ''}）`
+    const check = await verifyGenerated(abs, 'docx', markdown.replace(/\s/g, '').length > 0)
+    return `已生成 Word 文档 ${rel}（${(buf.length / 1024).toFixed(1)} KB${images?.size ? `，含 ${images.size} 张图片` : ''}）｜${check}`
   }
 }
 
@@ -953,7 +1116,8 @@ const writeXlsx: Tool = {
     await fs.writeFile(abs, buf)
     const cells = sheetList.reduce((n, s) => n + s.rows.reduce((m, r) => m + r.length, 0), 0)
     const charts = sheetList.filter((s) => s.chart).length
-    return `已生成 Excel 表格 ${rel}（${sheetList.length} 个工作表，${cells} 个单元格${charts ? `，${charts} 个图表` : ''}）`
+    const check = await verifyGenerated(abs, 'xlsx', cells > 0)
+    return `已生成 Excel 表格 ${rel}（${sheetList.length} 个工作表，${cells} 个单元格${charts ? `，${charts} 个图表` : ''}）｜${check}`
   }
 }
 
@@ -994,6 +1158,10 @@ const writePptx: Tool = {
             title: { type: 'string' },
             bullets: { type: 'array', items: { type: 'string' } },
             image: { type: 'string', description: '整页配图：相对工作区的 PNG/JPEG/GIF 路径' },
+            notes: {
+              type: 'string',
+              description: '演讲者备注（讲稿/要点说明，放映时只有演讲者可见）'
+            },
             chart: {
               type: 'object',
               description:
@@ -1022,7 +1190,11 @@ const writePptx: Tool = {
     const buf = slidesToPptx(slides as SlideInput[], images)
     await fs.writeFile(abs, buf)
     const extras = (slides as SlideInput[]).filter((s) => s.image || s.chart).length
-    return `已生成演示文稿 ${rel}（${slides.length} 张幻灯片${extras ? `，含 ${extras} 张配图/图表` : ''}）`
+    const hasText = (slides as SlideInput[]).some(
+      (sl) => (sl.title ?? '').trim() || (sl.bullets ?? []).length
+    )
+    const check = await verifyGenerated(abs, 'pptx', hasText)
+    return `已生成演示文稿 ${rel}（${slides.length} 张幻灯片${extras ? `，含 ${extras} 张配图/图表` : ''}）｜${check}`
   }
 }
 
@@ -1047,7 +1219,9 @@ const exportPdf: Tool = {
     await fs.mkdir(path.dirname(abs), { recursive: true })
     const buf = await markdownToPdf(markdown, title)
     await fs.writeFile(abs, buf)
-    return `已导出 PDF ${rel}（${(buf.length / 1024).toFixed(1)} KB）`
+    // printToPDF 不报错也可能产出空白页（Markdown 解析出问题时），必须回读确认有文字
+    const check = await verifyGenerated(abs, 'pdf', markdown.replace(/\s/g, '').length > 0)
+    return `已导出 PDF ${rel}（${(buf.length / 1024).toFixed(1)} KB）｜${check}`
   }
 }
 

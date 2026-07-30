@@ -146,6 +146,49 @@ const DICT: Dict = {
   },
   mcpRemoveConfirm: { zh: '删除 MCP server「{name}」？', en: 'Remove MCP server "{name}"?' },
   mcpTrust: { zh: '信任并启用', en: 'Trust & enable' },
+  // 技能/子agent 来源标签
+  srcBuiltin: { zh: '内置', en: 'Built-in' },
+  agentNew: { zh: '新建', en: 'New' },
+  agentCopy: { zh: '复制为自定义', en: 'Duplicate' },
+  agentNamePh: { zh: '名称，如 合同审阅', en: 'Name, e.g. contract-review' },
+  agentDescPh: {
+    zh: '一句话说明它擅长什么（主 agent 据此决定何时派它）',
+    en: 'What it is good at (the main agent uses this to decide when to delegate)'
+  },
+  agentToolsPh: {
+    zh: '工具白名单，逗号分隔；留空=全部',
+    en: 'Allowed tools, comma-separated; blank = all'
+  },
+  agentModelPh: { zh: '覆盖模型；留空=沿用当前', en: 'Override model; blank = inherit' },
+  agentPromptPh: {
+    zh: '系统提示：告诉它角色、工作方式与产出要求',
+    en: 'System prompt: role, method, expected output'
+  },
+  agentDeleteConfirm: { zh: '删除子 agent「{n}」？', en: 'Delete subagent "{n}"?' },
+  // 上下文预算 / 自动压缩
+  // Diff 面板：整轮回滚
+  diffRevertAll: { zh: '撤销本轮全部改动', en: 'Revert all changes' },
+  diffTouched: {
+    zh: '本轮改动了 {n} 个文件（共 {c} 次写入）',
+    en: '{n} file(s) changed this run ({c} writes)'
+  },
+  diffRevertAllConfirm: {
+    zh: '把这 {n} 个文件还原到本轮改动之前？此操作不可撤销：',
+    en: 'Restore these {n} file(s) to their state before this run? This cannot be undone:'
+  },
+  contextLabel: { zh: '上下文预算（字符）', en: 'Context budget (characters)' },
+  contextHint: {
+    zh: '发送给模型的历史上限。默认 120000（≈4 万 token）。模型上下文窗口大可调高（如 200000），小模型调低。',
+    en: 'Max history sent to the model. Default 120000 (~40k tokens). Raise for large-context models, lower for small ones.'
+  },
+  autoCompactLabel: { zh: '超出预算时自动压缩历史', en: 'Auto-compact history when over budget' },
+  autoCompactHint: {
+    zh: '开启后，较早的对话会被压成摘要保留关键信息；关闭则直接丢弃最早的消息（智能体会「突然失忆」）。',
+    en: 'On: older turns are summarized, keeping key facts. Off: oldest messages are dropped outright.'
+  },
+  srcWorkspace: { zh: '工作区', en: 'Workspace' },
+  srcGlobal: { zh: '全局', en: 'Global' },
+  srcPlugin: { zh: '插件', en: 'Plugin' },
   // 扩展中心（插件 / 应用 / MCP 统一页，对齐 Codex）
   extTitle: { zh: '扩展', en: 'Extensions' },
   extSubtitle: { zh: '管理应用、MCP 与插件', en: 'Manage apps, MCP and plugins' },
@@ -173,6 +216,14 @@ const DICT: Dict = {
   extNoPlugins: { zh: '尚未安装插件', en: 'No plugins installed' },
   extSkills: { zh: '技能', en: 'skills' },
   extMarketplace: { zh: '插件市场', en: 'Marketplace' },
+  extSuperseded: { zh: '已内置', en: 'Now built-in' },
+  extUpdatable: { zh: '有更新', en: 'Update available' },
+  extUpdate: { zh: '更新', en: 'Update' },
+  extRemove: { zh: '移除', en: 'Remove' },
+  extRemoveSuperseded: {
+    zh: '「{n}」的能力已内置，插件装着不再生效。移除它？',
+    en: '"{n}" is now built in — the plugin no longer has any effect. Remove it?'
+  },
   extServers: { zh: '服务器', en: 'Servers' },
   extAddServer: { zh: '添加服务器', en: 'Add server' },
   extFromPluginsSection: { zh: '来自插件', en: 'From plugins' },

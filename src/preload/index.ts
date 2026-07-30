@@ -66,8 +66,12 @@ const api: Api = {
     ipcRenderer.invoke('workspace:readFile', workspaceDir, relPath),
   writeWorkspaceFile: (workspaceDir, relPath, content) =>
     ipcRenderer.invoke('workspace:writeFile', workspaceDir, relPath, content),
+  deleteWorkspaceFile: (workspaceDir, relPath) =>
+    ipcRenderer.invoke('workspace:deleteFile', workspaceDir, relPath),
   listSkills: () => ipcRenderer.invoke('skills:list'),
   listAgents: (ws) => ipcRenderer.invoke('agents:list', ws),
+  saveAgent: (ws, scope, def) => ipcRenderer.invoke('agents:save', ws, scope, def),
+  removeAgent: (ws, scope, name) => ipcRenderer.invoke('agents:remove', ws, scope, name),
   listCommands: (ws) => ipcRenderer.invoke('commands:list', ws),
   searchConversations: (q) => ipcRenderer.invoke('conversations:search', q),
   exportData: () => ipcRenderer.invoke('data:export'),

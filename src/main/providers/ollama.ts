@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { Message, ModelInfo, ToolCall } from '@shared/types'
 import type { ChatOptions, ChatResult, ModelProvider } from './types'
-import { stallGuard } from './util'
+import { stallGuard, withRetry } from './util'
 import { netFetch } from './netfetch'
 
 const STALL_MS = 60_000
@@ -88,12 +88,17 @@ export class OllamaProvider implements ModelProvider {
 
     const guard = stallGuard(opts.signal, STALL_MS)
     try {
-      const res = await netFetch(`${this.baseUrl}/api/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-        signal: guard.signal
-      })
+      // 建连阶段重试瞬时故障（本地服务刚启动/短暂无响应）；已开始流式后不重试
+      const res = await withRetry(
+        () =>
+          netFetch(`${this.baseUrl}/api/chat`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+            signal: guard.signal
+          }),
+        { statusOf: (r) => r.status, signal: opts.signal }
+      )
 
       if (!res.ok || !res.body) {
         const txt = await res.text().catch(() => '')
@@ -105,6 +110,7 @@ export class OllamaProvider implements ModelProvider {
       let buffer = ''
       let content = ''
       let reasoning = ''
+      let usage: import('./types').TokenUsage | undefined
       const toolCalls: ToolCall[] = []
 
       while (true) {
@@ -121,6 +127,9 @@ export class OllamaProvider implements ModelProvider {
 
           let json: {
             message?: OllamaMsg
+            /** Ollama 在最后一条（done=true）带上用量 */
+            prompt_eval_count?: number
+            eval_count?: number
             error?: string
           }
           try {
@@ -129,6 +138,11 @@ export class OllamaProvider implements ModelProvider {
             continue
           }
           if (json.error) throw new Error(json.error)
+          if (json.prompt_eval_count != null || json.eval_count != null) {
+            const prompt = json.prompt_eval_count ?? 0
+            const completion = json.eval_count ?? 0
+            usage = { prompt, completion, total: prompt + completion }
+          }
 
           const msg = json.message
           if (msg?.thinking) {
@@ -163,7 +177,7 @@ export class OllamaProvider implements ModelProvider {
         }
       }
 
-      return { content, toolCalls, reasoning: reasoning || undefined }
+      return { content, toolCalls, reasoning: reasoning || undefined, usage }
     } finally {
       guard.dispose()
     }

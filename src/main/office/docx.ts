@@ -1,6 +1,7 @@
 // Markdown → .docx（WordprocessingML）纯 TS 生成器。
-// 支持：# ## ### 标题、正文段落、**粗体**/*斜体*/`等宽`、- 无序 & 1. 有序列表、
-// | 表格 |、``` 代码块、> 引用、--- 分隔线。中文直接可用（文本层是 UTF-8，字体由 Word 渲染）。
+// 支持：# ~ ###### 六级标题、正文段落、**粗体**/*斜体*/`等宽`/~~删除线~~、
+// - 无序 & 1. 有序列表（按前导空格分层缩进）、| 表格 |、``` 代码块、> 引用、--- 分隔线、
+// ![图](路径) 内嵌图片、<!-- pagebreak --> 分页符。中文直接可用（字体由 Word 渲染）。
 import { writeZip, xmlEsc } from './zip'
 import { imageSize } from './imagesize'
 
@@ -56,11 +57,12 @@ interface Run {
   bold?: boolean
   italic?: boolean
   code?: boolean
+  strike?: boolean
 }
 
 function parseInline(text: string): Run[] {
   const runs: Run[] = []
-  const re = /(\*\*((?:[^*]|\*(?!\*))+)\*\*)|(\*([^*]+)\*)|(`([^`]+)`)/g
+  const re = /(\*\*((?:[^*]|\*(?!\*))+)\*\*)|(\*([^*]+)\*)|(`([^`]+)`)|(~~([^~]+)~~)/g
   let last = 0
   let m: RegExpExecArray | null
   while ((m = re.exec(text))) {
@@ -68,6 +70,7 @@ function parseInline(text: string): Run[] {
     if (m[2] !== undefined) runs.push({ text: m[2], bold: true })
     else if (m[4] !== undefined) runs.push({ text: m[4], italic: true })
     else if (m[6] !== undefined) runs.push({ text: m[6], code: true })
+    else if (m[8] !== undefined) runs.push({ text: m[8], strike: true })
     last = m.index + m[0].length
   }
   if (last < text.length) runs.push({ text: text.slice(last) })
@@ -79,14 +82,32 @@ function runXml(r: Run): string {
   if (r.bold) props.push('<w:b/>')
   if (r.italic) props.push('<w:i/>')
   if (r.code) props.push('<w:rFonts w:ascii="Courier New" w:hAnsi="Courier New"/>')
+  if (r.strike) props.push('<w:strike/>')
   const rPr = props.length ? `<w:rPr>${props.join('')}</w:rPr>` : ''
   return `<w:r>${rPr}<w:t xml:space="preserve">${xmlEsc(r.text)}</w:t></w:r>`
 }
 
-function para(runs: Run[], opts?: { style?: string; indent?: boolean; bullet?: string }): string {
+function para(
+  runs: Run[],
+  opts?: {
+    style?: string
+    indent?: boolean
+    bullet?: string
+    level?: number
+    /** 正文段落首行缩进 2 字符（中文排版惯例）；标题/列表/表格/代码块不用 */
+    firstLine?: boolean
+  }
+): string {
   const pPr: string[] = []
   if (opts?.style) pPr.push(`<w:pStyle w:val="${opts.style}"/>`)
-  if (opts?.indent) pPr.push('<w:ind w:left="420" w:hanging="210"/>')
+  if (opts?.indent) {
+    // 按嵌套层级递增缩进：此前固定 420，导致「一级/二级/三级」看起来完全一样
+    const left = 420 + (opts.level ?? 0) * 420
+    pPr.push(`<w:ind w:left="${left}" w:hanging="210"/>`)
+  } else if (opts?.firstLine) {
+    // firstLineChars=200 表示"2 个字符"，随字号自适应，比固定磅值更稳
+    pPr.push('<w:ind w:firstLineChars="200"/>')
+  }
   const prefix = opts?.bullet ? [{ text: `${opts.bullet} ` }] : []
   return `<w:p>${pPr.length ? `<w:pPr>${pPr.join('')}</w:pPr>` : ''}${[...prefix, ...runs]
     .map(runXml)
@@ -154,15 +175,37 @@ function bodyXml(markdown: string, imgCtx: ImgCtx): string {
       if (rows.length) out.push(tableXml(rows))
       continue
     }
-    const h = /^(#{1,3})\s+(.*)$/.exec(line)
+    // 分页符：HTML 注释形式，在其它 Markdown 渲染器里不可见（法律文书常需每份单独起页）
+    if (/^\s*<!--\s*(pagebreak|分页)\s*-->\s*$/i.test(line)) {
+      out.push('<w:p><w:r><w:br w:type="page"/></w:r></w:p>')
+      i++
+      continue
+    }
+    const h = /^(#{1,6})\s+(.*)$/.exec(line)
     if (h) {
       out.push(para(parseInline(h[2]), { style: `Heading${h[1].length}` }))
     } else if (/^\s*[-*]\s+/.test(line)) {
-      out.push(para(parseInline(line.replace(/^\s*[-*]\s+/, '')), { indent: true, bullet: '•' }))
+      // 前导空格 → 嵌套层级（2 空格或 1 个 Tab 记一级）
+      const lead = /^[\t ]*/.exec(line)![0].replace(/\t/g, '  ').length
+      const level = Math.min(Math.floor(lead / 2), 4)
+      const marks = ['•', '◦', '▪', '·', '-']
+      out.push(
+        para(parseInline(line.replace(/^\s*[-*]\s+/, '')), {
+          indent: true,
+          bullet: marks[level],
+          level
+        })
+      )
     } else if (/^\s*\d+\.\s+/.test(line)) {
+      const lead = /^[\t ]*/.exec(line)![0].replace(/\t/g, '  ').length
+      const level = Math.min(Math.floor(lead / 2), 4)
       const n = /^\s*(\d+)\./.exec(line)![1]
       out.push(
-        para(parseInline(line.replace(/^\s*\d+\.\s+/, '')), { indent: true, bullet: `${n}.` })
+        para(parseInline(line.replace(/^\s*\d+\.\s+/, '')), {
+          indent: true,
+          bullet: `${n}.`,
+          level
+        })
       )
     } else if (/^\s*>\s?/.test(line)) {
       out.push(
@@ -181,7 +224,7 @@ function bodyXml(markdown: string, imgCtx: ImgCtx): string {
         /* 跳过 */
       }
     } else {
-      out.push(para(parseInline(line)))
+      out.push(para(parseInline(line), { firstLine: true }))
     }
     i++
   }
@@ -190,8 +233,8 @@ function bodyXml(markdown: string, imgCtx: ImgCtx): string {
 
 const STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-<w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="宋体"/><w:sz w:val="22"/></w:rPr></w:rPrDefault>
-<w:pPrDefault><w:pPr><w:spacing w:after="120" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>
+<w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:eastAsia="宋体"/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:rPrDefault>
+<w:pPrDefault><w:pPr><w:spacing w:after="0" w:line="360" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>
 <w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>
 <w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/>
 <w:pPr><w:spacing w:before="240" w:after="120"/><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:sz w:val="32"/></w:rPr></w:style>
@@ -199,16 +242,59 @@ const STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:pPr><w:spacing w:before="200" w:after="100"/><w:outlineLvl w:val="1"/></w:pPr><w:rPr><w:b/><w:sz w:val="28"/></w:rPr></w:style>
 <w:style w:type="paragraph" w:styleId="Heading3"><w:name w:val="heading 3"/><w:basedOn w:val="Normal"/>
 <w:pPr><w:spacing w:before="160" w:after="80"/><w:outlineLvl w:val="2"/></w:pPr><w:rPr><w:b/><w:sz w:val="24"/></w:rPr></w:style>
+<w:style w:type="paragraph" w:styleId="Heading4"><w:name w:val="heading 4"/><w:basedOn w:val="Normal"/>
+<w:pPr><w:spacing w:before="140" w:after="70"/><w:outlineLvl w:val="3"/></w:pPr><w:rPr><w:b/><w:sz w:val="23"/></w:rPr></w:style>
+<w:style w:type="paragraph" w:styleId="Heading5"><w:name w:val="heading 5"/><w:basedOn w:val="Normal"/>
+<w:pPr><w:spacing w:before="120" w:after="60"/><w:outlineLvl w:val="4"/></w:pPr><w:rPr><w:b/><w:sz w:val="22"/></w:rPr></w:style>
+<w:style w:type="paragraph" w:styleId="Heading6"><w:name w:val="heading 6"/><w:basedOn w:val="Normal"/>
+<w:pPr><w:spacing w:before="100" w:after="50"/><w:outlineLvl w:val="5"/></w:pPr><w:rPr><w:b/><w:i/><w:sz w:val="22"/></w:rPr></w:style>
 </w:styles>`
 
 /** Markdown → .docx 文件内容。images：`![](path)` 里 path→图片字节（由工具层从工作区读入）。 */
-export function markdownToDocx(markdown: string, images?: Map<string, Buffer>): Buffer {
+export interface DocxOptions {
+  /** 页眉文字（法律文书常放事务所抬头/文号） */
+  header?: string
+  /** 页脚文字；用 {page} 插入当前页码、{pages} 插入总页数 */
+  footer?: string
+}
+
+export function markdownToDocx(
+  markdown: string,
+  images?: Map<string, Buffer>,
+  opts?: DocxOptions
+): Buffer {
   const imgCtx: ImgCtx = { images: images ?? new Map(), used: [] }
+  const header = opts?.header?.trim()
+  const footer = opts?.footer?.trim()
+  // 页脚里的 {page}/{pages} 转成真正的页码域（PAGE / NUMPAGES），否则只是死字
+  const fieldRuns = (text: string): string =>
+    text
+      .split(/(\{page\}|\{pages\})/)
+      .filter((x) => x !== '')
+      .map((seg) =>
+        seg === '{page}' || seg === '{pages}'
+          ? `<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> ${
+              seg === '{page}' ? 'PAGE' : 'NUMPAGES'
+            } </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>1</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>`
+          : `<w:r><w:t xml:space="preserve">${xmlEsc(seg)}</w:t></w:r>`
+      )
+      .join('')
+  const hdrXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:pPr><w:jc w:val="center"/></w:pPr>${fieldRuns(
+    header ?? ''
+  )}</w:p></w:hdr>`
+  const ftrXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:pPr><w:jc w:val="center"/></w:pPr>${fieldRuns(
+    footer ?? ''
+  )}</w:p></w:ftr>`
+  const sectRefs =
+    (header ? '<w:headerReference w:type="default" r:id="rIdHdr"/>' : '') +
+    (footer ? '<w:footerReference w:type="default" r:id="rIdFtr"/>' : '')
   const document = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${bodyXml(
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>${bodyXml(
     markdown,
     imgCtx
-  )}<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr></w:body></w:document>`
+  )}<w:sectPr>${sectRefs}<w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="851" w:footer="992"/></w:sectPr></w:body></w:document>`
 
   const exts = new Set(imgCtx.used.map((u) => (u.ext === 'jpeg' ? 'jpg' : u.ext)))
   const imgDefaults = [...exts]
@@ -229,7 +315,15 @@ export function markdownToDocx(markdown: string, images?: Map<string, Buffer>): 
 <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
 <Default Extension="xml" ContentType="application/xml"/>${imgDefaults}
 <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
-<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
+<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>${
+        header
+          ? '<Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>'
+          : ''
+      }${
+        footer
+          ? '<Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/>'
+          : ''
+      }
 </Types>`
     },
     {
@@ -243,11 +337,21 @@ export function markdownToDocx(markdown: string, images?: Map<string, Buffer>): 
       name: 'word/_rels/document.xml.rels',
       data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>${imgRels}
+<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>${imgRels}${
+        header
+          ? '<Relationship Id="rIdHdr" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/>'
+          : ''
+      }${
+        footer
+          ? '<Relationship Id="rIdFtr" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/>'
+          : ''
+      }
 </Relationships>`
     },
     { name: 'word/styles.xml', data: STYLES },
     { name: 'word/document.xml', data: document },
+    ...(header ? [{ name: 'word/header1.xml', data: hdrXml }] : []),
+    ...(footer ? [{ name: 'word/footer1.xml', data: ftrXml }] : []),
     ...imgCtx.used.map((u) => ({ name: `word/${u.name}`, data: u.buf }))
   ])
 }

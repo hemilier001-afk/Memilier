@@ -12,8 +12,7 @@ import {
   GearIcon,
   FolderIcon,
   SearchIcon,
-  PinIcon,
-  BrandIcon
+  PinIcon
 } from './icons'
 
 const NAV: { key: View; label: string; icon: JSX.Element }[] = [
@@ -341,10 +340,7 @@ export function Sidebar(): JSX.Element {
   return (
     <aside className="flex w-64 flex-col border-r border-line bg-paper">
       <div className="region-drag flex items-center justify-between px-3 pb-1 pt-10">
-        <span className="flex items-center gap-1.5 px-1 text-sm font-semibold text-fg">
-          <BrandIcon className="h-4 w-4" />
-          {t('brandName')}
-        </span>
+        <span className="px-1 text-sm font-semibold text-fg">{t('brandName')}</span>
         <button
           onClick={() => setCollapsed(true)}
           title={t('sbCollapse')}

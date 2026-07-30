@@ -17,7 +17,7 @@ export interface AgentDef {
   model?: string
   /** system prompt 正文 */
   prompt: string
-  source: 'builtin' | 'workspace' | 'global'
+  source: 'builtin' | 'workspace' | 'global' | 'plugin'
 }
 
 // 内置子 agent 类型：开箱即用的常用角色（用户可在 .hemilier/agents/ 覆盖或新增）
@@ -103,18 +103,64 @@ export const agentManager = {
     return path.join(workspace, '.hemilier', 'agents')
   },
 
-  /** 汇总内置 + 全局 + 工作区（同名以工作区 > 全局 > 内置为准） */
-  async list(workspace: string): Promise<AgentDef[]> {
+  /** 汇总内置 + 插件 + 全局 + 工作区（同名以 工作区 > 全局 > 插件 > 内置 为准） */
+  async list(workspace: string, pluginDirs: string[] = []): Promise<AgentDef[]> {
     const ws = await scanDir(this.workspaceDir(workspace), 'workspace')
     const gl = await scanDir(this.globalDir(), 'global')
+    // 插件带来的角色：插件此前只能带 MCP+技能，现在也能带子 agent 定义
+    const pl: AgentDef[] = []
+    for (const d of pluginDirs) pl.push(...(await scanDir(d, 'plugin')))
     const merged = new Map<string, AgentDef>()
     for (const a of BUILTIN) merged.set(a.name, a)
+    for (const a of pl) merged.set(a.name, a)
     for (const a of gl) merged.set(a.name, a)
     for (const a of ws) merged.set(a.name, a) // 工作区优先级最高
     return [...merged.values()]
   },
 
-  async get(workspace: string, name: string): Promise<AgentDef | undefined> {
-    return (await this.list(workspace)).find((a) => a.name === name)
+  async get(
+    workspace: string,
+    name: string,
+    pluginDirs: string[] = []
+  ): Promise<AgentDef | undefined> {
+    return (await this.list(workspace, pluginDirs)).find((a) => a.name === name)
+  },
+
+  /** 保存自定义子 agent 为 .md（frontmatter + 正文）。scope=workspace 随项目走，global 跨项目。 */
+  async save(
+    workspace: string,
+    scope: 'workspace' | 'global',
+    def: { name: string; description: string; tools?: string; model?: string; prompt: string }
+  ): Promise<void> {
+    const name = def.name.trim()
+    // 文件名即 agent 名：限制字符集，防路径穿越与非法文件名
+    if (!/^[A-Za-z0-9_\u4e00-\u9fff-]{1,40}$/.test(name)) {
+      throw new Error('名称只能用中英文、数字、下划线、连字符（1-40 字）')
+    }
+    if (!def.prompt.trim()) throw new Error('系统提示（正文）不能为空')
+    const dir = scope === 'global' ? this.globalDir() : this.workspaceDir(workspace)
+    await fs.mkdir(dir, { recursive: true })
+    const fm = [
+      '---',
+      `name: ${name}`,
+      `description: ${def.description.trim().replace(/\n/g, ' ')}`,
+      ...(def.tools?.trim() ? [`tools: ${def.tools.trim()}`] : []),
+      ...(def.model?.trim() ? [`model: ${def.model.trim()}`] : []),
+      '---',
+      ''
+    ].join('\n')
+    await fs.writeFile(path.join(dir, `${name}.md`), fm + def.prompt.trim() + '\n', 'utf8')
+  },
+
+  /** 删除自定义子 agent（内置的删不掉——文件不存在，如实报错） */
+  async remove(workspace: string, scope: 'workspace' | 'global', name: string): Promise<void> {
+    if (!/^[A-Za-z0-9_\u4e00-\u9fff-]{1,40}$/.test(name)) throw new Error('名称不合法')
+    const dir = scope === 'global' ? this.globalDir() : this.workspaceDir(workspace)
+    await fs.rm(path.join(dir, `${name}.md`), { force: true })
+  },
+
+  /** 读取某个自定义 agent 的原始字段（供编辑界面回填；内置的返回其定义但不可保存到原处） */
+  async raw(workspace: string, name: string): Promise<AgentDef | undefined> {
+    return this.get(workspace, name)
   }
 }

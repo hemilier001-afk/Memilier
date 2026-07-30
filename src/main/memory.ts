@@ -21,6 +21,34 @@ const TYPE_LABEL: Record<MemoryType, string> = {
   todo: '待办'
 }
 
+// 查询分词：拉丁按空白/标点切；**中日韩按 2-gram 切**——中文不用空格，
+// 若整句当一个词做子串匹配，"保密协议甲方是谁"这类自然提问会检索不到任何东西（实测 0 命中）。
+export function tokenizeQuery(query: string): string[] {
+  const terms: string[] = []
+  const CJK = /[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]/
+  for (const w of query
+    .toLowerCase()
+    .split(/[\s,，。、；;:：!！?？()（）【】"'`~…—\-_/\\]+/)
+    .filter(Boolean)) {
+    if (!CJK.test(w)) {
+      terms.push(w)
+      continue
+    }
+    // 混合片段：先取出其中的拉丁/数字子串，再把 CJK 连续段切 2-gram
+    for (const lat of w
+      .split(new RegExp(`[${'\\u4e00-\\u9fff\\u3040-\\u30ff\\uac00-\\ud7af'}]+`))
+      .filter(Boolean))
+      terms.push(lat)
+    for (const seg of w.match(
+      new RegExp(`[${'\\u4e00-\\u9fff\\u3040-\\u30ff\\uac00-\\ud7af'}]+`, 'g')
+    ) ?? []) {
+      if (seg.length <= 2) terms.push(seg)
+      else for (let i = 0; i + 2 <= seg.length; i++) terms.push(seg.slice(i, i + 2))
+    }
+  }
+  return [...new Set(terms.filter(Boolean))]
+}
+
 function projectFile(workspace: string): string {
   return path.join(workspace, '.hemilier', 'memory.json')
 }
@@ -173,8 +201,7 @@ export const memory = {
 
   /** 关键词检索两层记忆（供 recall 工具；子串匹配，大小写不敏感） */
   async search(workspace: string, query: string, limit = 10): Promise<string> {
-    const q = query.toLowerCase()
-    const terms = q.split(/\s+/).filter(Boolean)
+    const terms = tokenizeQuery(query)
     if (!terms.length) return ''
     const { global: g, project: p } = await this.listAll(workspace)
     const hits: { scope: string; e: MemoryEntry; score: number }[] = []
@@ -184,8 +211,11 @@ export const memory = {
     ] as const) {
       for (const e of list) {
         const text = e.text.toLowerCase()
-        const score = terms.reduce((n, t) => n + (text.includes(t) ? 1 : 0), 0)
-        if (score > 0) hits.push({ scope, e, score })
+        const matched = terms.reduce((n, t) => n + (text.includes(t) ? 1 : 0), 0)
+        if (!matched) continue
+        // 按覆盖比例排序即可，不设硬阈值：recall 是模型主动检索，
+        // 漏检（该知道的没找到）比多给一两条弱相关更有害；完全不沾边的自然 0 命中。
+        hits.push({ scope, e, score: matched / terms.length })
       }
     }
     hits.sort((a, b) => b.score - a.score || b.e.updatedAt - a.e.updatedAt)

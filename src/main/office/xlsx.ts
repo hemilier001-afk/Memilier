@@ -60,6 +60,41 @@ function buildChartSpec(
   }
 }
 
+// 显示宽度：CJK/全角字符占 2 个西文字符位。没有列宽时中文表头会挤成一团、
+// 长数字显示成 ####，用户打开表格第一眼就很糟。
+function displayWidth(v: CellValue): number {
+  const t = String(v ?? '')
+  let w = 0
+  for (const ch of t)
+    w +=
+      /[\u1100-\u115f\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe6f\uff00-\uff60\uffe0-\uffe6]/.test(
+        ch
+      )
+        ? 2
+        : 1
+  return w
+}
+
+/** 按每列最宽内容估算列宽（含上下限，避免超宽列把表撑爆） */
+function colsXml(rows: CellValue[][]): string {
+  const ncol = Math.max(0, ...rows.map((r) => r.length))
+  if (!ncol) return ''
+  const defs: string[] = []
+  for (let c = 0; c < ncol; c++) {
+    let max = 0
+    for (const r of rows) {
+      const v = r[c]
+      if (v == null) continue
+      // 公式单元格按结果长度无法预知，给个保守值
+      const w = String(v).startsWith('=') ? 12 : displayWidth(v)
+      if (w > max) max = w
+    }
+    const width = Math.min(Math.max(max + 2.5, 8), 60) // 下限 8、上限 60 个字符宽
+    defs.push(`<col min="${c + 1}" max="${c + 1}" width="${width.toFixed(2)}" customWidth="1"/>`)
+  }
+  return `<cols>${defs.join('')}</cols>`
+}
+
 function sheetXml(rows: CellValue[][], hasDrawing: boolean): string {
   const rowsXml = rows
     .map((cols, r) => {
@@ -93,9 +128,9 @@ function sheetXml(rows: CellValue[][], hasDrawing: boolean): string {
     })
     .join('')
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheetData>${rowsXml}</sheetData>${
-    hasDrawing ? '<drawing r:id="rId1"/>' : ''
-  }</worksheet>`
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>${colsXml(
+    rows
+  )}<sheetData>${rowsXml}</sheetData>${hasDrawing ? '<drawing r:id="rId1"/>' : ''}</worksheet>`
 }
 
 /** 图表锚定的 drawing 部件（放在数据下方，宽 ~8 列、高 ~16 行） */
